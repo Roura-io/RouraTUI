@@ -1,4 +1,18 @@
-# rouraTUI v2.0.0-alpha.6
+# rouraTUI v2.0.0-alpha.7
+
+Alpha.7 restores the full-screen conversation shell with a multiline composer
+permanently pinned to the bottom.
+
+## New in alpha.7
+
+- Added a Claude-inspired coral transcript, header, and status footer.
+- Kept responses in the scrolling viewport while preserving composer position.
+- Added active agent, permission mode, branch, and activity status at a glance.
+- Preserved terminal cleanup when the user exits with Control-C.
+- Staged disabled Chrome-control foundations for later prereleases; this release
+  neither installs nor enables browser control.
+
+## New in alpha.6
 
 Alpha.6 restores the original unboxed conversation layout and bottom `> `
 composer, identifies the active responding agent by its model name, and fixes
@@ -57,3 +71,9 @@ Alpha.5 points the updater and product metadata at the canonical
 - `cargo clippy --workspace --all-targets -- -D warnings`
 - `cargo test --workspace`
 - Clean-environment mock provider parity harness
+# 2.0.0-alpha.7
+
+- Restores the full-screen conversation shell with a multiline composer permanently pinned to the bottom.
+- Adds a Claude-inspired coral visual treatment, transcript viewport, agent identity, permission mode, branch, and activity footer.
+- Keeps responses in the scrolling transcript while preserving composer position and terminal cleanup on exit.
+- Stages disabled Chrome-control foundations for later prereleases; no browser-control capability is installed or enabled in this release.
