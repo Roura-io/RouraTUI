@@ -1,0 +1,33 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos-arm64:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Build rouraTUI
+        run: cargo build --locked --release -p rouratui-cli
+      - name: Package and checksum
+        run: |
+          mkdir release
+          cp target/release/rouratui release/rouratui
+          tar -czf rouratui-darwin-arm64.tar.gz -C release rouratui
+          shasum -a 256 rouratui-darwin-arm64.tar.gz > rouratui-darwin-arm64.tar.gz.sha256
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" \
+            rouratui-darwin-arm64.tar.gz \
+            rouratui-darwin-arm64.tar.gz.sha256 \
+            --title "rouraTUI $GITHUB_REF_NAME" \
+            --generate-notes
