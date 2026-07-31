@@ -12,6 +12,11 @@ The installed launcher defaults to the local Ollama server at
 `http://10.0.10.3:11434` with `qwen3.6:27b-coding-bf16`. Set `OLLAMA_HOST` or
 `CLAW_MODEL` explicitly to override either value.
 
+Every prompt is handled by the rouraTUI orchestrator. It creates a visible
+checklist, delegates analysis to one or more synchronous local specialists,
+synthesizes their results, and completes the checklist before answering.
+Specialists are analysis-only so mutations retain a single approval boundary.
+
 A high-performance Rust rewrite of the Claw Code CLI agent harness. Built for speed, safety, and native tool execution.
 
 For a task-oriented guide with copy/paste examples, see [`../USAGE.md`](../USAGE.md).

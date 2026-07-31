@@ -1,4 +1,4 @@
-# rouraTUI v2.0.0-alpha.2
+# rouraTUI v2.0.0-alpha.3
 
 This is the first runnable Rust migration release.
 
@@ -12,6 +12,10 @@ This is the first runnable Rust migration release.
 - Native Apple silicon release binary installed as `rouratui`.
 - Local-only launcher targeting Ollama at `10.0.10.3:11434` with
   `qwen3.6:27b-coding-bf16`; no cloud credentials are required.
+- Mandatory orchestrator routing for every prompt, with visible TodoWrite
+  checklists and synchronous Explore, Plan, or Verification specialists.
+- Analysis-only delegation keeps mutations and approvals at the orchestrator
+  boundary.
 - Preserved Go v1.2.1 history on `legacy/go-v1.2.1`.
 
 ## Alpha limitations

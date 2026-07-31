@@ -685,6 +685,26 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             required_permission: PermissionMode::DangerFullAccess,
         },
         ToolSpec {
+            name: "Delegate",
+            description: "Run a local, synchronous specialist and return its completed analysis to the orchestrator.",
+            input_schema: json!({
+                "type": "object",
+                "properties": {
+                    "description": { "type": "string" },
+                    "prompt": { "type": "string" },
+                    "subagent_type": {
+                        "type": "string",
+                        "enum": ["Explore", "Plan", "Verification"]
+                    },
+                    "name": { "type": "string" },
+                    "model": { "type": "string" }
+                },
+                "required": ["description", "prompt", "subagent_type"],
+                "additionalProperties": false
+            }),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
             name: "ToolSearch",
             description: "Search for deferred or specialized tools by exact name or keywords.",
             input_schema: json!({
@@ -1432,6 +1452,7 @@ fn execute_tool_with_enforcer(
         "TodoWrite" => from_value::<TodoWriteInput>(input).and_then(run_todo_write),
         "Skill" => from_value::<SkillInput>(input).and_then(run_skill),
         "Agent" => from_value::<AgentInput>(input).and_then(run_agent),
+        "Delegate" => from_value::<AgentInput>(input).and_then(run_delegate),
         "ToolSearch" => from_value::<ToolSearchInput>(input).and_then(run_tool_search),
         "NotebookEdit" => from_value::<NotebookEditInput>(input).and_then(run_notebook_edit),
         "Sleep" => from_value::<SleepInput>(input).and_then(run_sleep),
@@ -2513,6 +2534,26 @@ fn run_skill(input: SkillInput) -> Result<String, String> {
 
 fn run_agent(input: AgentInput) -> Result<String, String> {
     to_pretty_json(execute_agent(input)?)
+}
+
+fn run_delegate(mut input: AgentInput) -> Result<String, String> {
+    let specialist = normalize_subagent_type(input.subagent_type.as_deref());
+    if !matches!(specialist.as_str(), "Explore" | "Plan" | "Verification") {
+        return Err(String::from(
+            "Delegate requires an analysis-only Explore, Plan, or Verification specialist",
+        ));
+    }
+    input.subagent_type = Some(specialist);
+    let manifest = execute_agent_with_spawn(input, |job| run_agent_job(&job))?;
+    let transcript =
+        std::fs::read_to_string(&manifest.output_file).map_err(|error| error.to_string())?;
+    to_pretty_json(json!({
+        "agent_id": manifest.agent_id,
+        "name": manifest.name,
+        "status": "completed",
+        "model": manifest.model,
+        "transcript": transcript,
+    }))
 }
 
 fn run_tool_search(input: ToolSearchInput) -> Result<String, String> {
@@ -4084,7 +4125,7 @@ fn parse_skill_frontmatter_value(contents: &str, key: &str) -> Option<String> {
     None
 }
 
-const DEFAULT_AGENT_MODEL: &str = "claude-opus-4-6";
+const DEFAULT_AGENT_MODEL: &str = "qwen3.6:27b-coding-bf16";
 const DEFAULT_AGENT_SYSTEM_DATE: &str = "2026-03-31";
 const DEFAULT_AGENT_MAX_ITERATIONS: usize = 32;
 
@@ -4250,8 +4291,15 @@ fn resolve_agent_model(model: Option<&str>) -> String {
     model
         .map(str::trim)
         .filter(|model| !model.is_empty())
-        .unwrap_or(DEFAULT_AGENT_MODEL)
-        .to_string()
+        .map_or_else(
+            || {
+                std::env::var("CLAW_MODEL")
+                    .ok()
+                    .filter(|model| !model.trim().is_empty())
+                    .unwrap_or_else(|| DEFAULT_AGENT_MODEL.to_string())
+            },
+            str::to_string,
+        )
 }
 
 fn allowed_tools_for_subagent(subagent_type: &str) -> BTreeSet<String> {
@@ -9351,6 +9399,20 @@ mod tests {
         assert!(verification.contains("bash"));
         assert!(verification.contains("power_shell"));
         assert!(!verification.contains("write_file"));
+    }
+
+    #[test]
+    fn delegate_is_synchronous_analysis_only_surface() {
+        let delegate = mvp_tool_specs()
+            .into_iter()
+            .find(|spec| spec.name == "Delegate")
+            .expect("Delegate tool should exist");
+
+        assert_eq!(delegate.required_permission, PermissionMode::ReadOnly);
+        assert_eq!(
+            delegate.input_schema["properties"]["subagent_type"]["enum"],
+            json!(["Explore", "Plan", "Verification"])
+        );
     }
 
     #[test]

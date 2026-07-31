@@ -11871,13 +11871,40 @@ fn short_tool_id(id: &str) -> String {
 }
 
 fn build_system_prompt(model: &str) -> Result<Vec<String>, Box<dyn std::error::Error>> {
-    Ok(load_system_prompt(
+    let mut prompt = load_system_prompt(
         env::current_dir()?,
         DEFAULT_DATE,
         env::consts::OS,
         "unknown",
         model_family_identity_for(model),
-    )?)
+    )?;
+    prompt.push(String::from(
+        "You are the rouraTUI orchestrator. Every user turn must follow this protocol:\n\
+         1. Before substantive work, call TodoWrite with a concise checklist and exactly one in_progress item.\n\
+         2. Never answer a user prompt entirely by yourself. Call Delegate at least once with an analysis-only Explore, Plan, or Verification specialist. Use multiple Delegate calls when independent expertise would materially improve the result.\n\
+         3. Synthesize the specialist transcripts yourself. The orchestrator alone communicates the final answer and requests any mutation or approval.\n\
+         4. Update TodoWrite as work advances and mark every item completed before the final answer.\n\
+         5. All inference is local-only through the configured Ollama host. Never request, recommend, or fall back to a cloud model or cloud credential.",
+    ));
+    Ok(prompt)
+}
+
+#[cfg(test)]
+mod orchestrator_prompt_tests {
+    use super::build_system_prompt;
+
+    #[test]
+    fn every_turn_requires_checklist_delegation_and_local_inference() {
+        let prompt = build_system_prompt("qwen3.6:27b-coding-bf16")
+            .expect("orchestrator prompt should build")
+            .join("\n");
+
+        assert!(prompt.contains("Every user turn must follow this protocol"));
+        assert!(prompt.contains("call TodoWrite"));
+        assert!(prompt.contains("Call Delegate at least once"));
+        assert!(prompt.contains("All inference is local-only"));
+        assert!(prompt.contains("Never request, recommend, or fall back to a cloud model"));
+    }
 }
 
 struct PluginsCommandPayload {
