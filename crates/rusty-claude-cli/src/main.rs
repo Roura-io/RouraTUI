@@ -18,6 +18,7 @@ mod init;
 mod input;
 mod render;
 mod setup_wizard;
+mod tui;
 mod update;
 
 use std::collections::BTreeSet;
@@ -7087,58 +7088,27 @@ fn run_repl(
     let resolved_model = resolve_repl_model(model)?;
     let mut cli = LiveCli::new(resolved_model, true, allowed_tools, permission_mode)?;
     cli.set_reasoning_effort(reasoning_effort);
-    let mut editor =
-        input::LineEditor::new("> ", cli.repl_completion_candidates().unwrap_or_default());
-    println!("{}", cli.startup_banner());
-    println!("{}", format_connected_line(&cli.model));
-
-    loop {
-        editor.set_completions(cli.repl_completion_candidates().unwrap_or_default());
-        match editor.read_line()? {
-            input::ReadOutcome::Submit(input) => {
-                let trimmed = input.trim().to_string();
-                if trimmed.is_empty() {
-                    continue;
-                }
-                if matches!(trimmed.as_str(), "/exit" | "/quit") {
-                    cli.persist_session()?;
-                    break;
-                }
-                match SlashCommand::parse(&trimmed) {
-                    Ok(Some(command)) => {
-                        if cli.handle_repl_command(command)? {
-                            cli.persist_session()?;
-                        }
-                        continue;
-                    }
-                    Ok(None) => {}
-                    Err(error) => {
-                        eprintln!("{error}");
-                        continue;
-                    }
-                }
-                // Bare-word skill dispatch: if the first token of the input
-                // matches a known skill name, invoke it as `/skills <input>`
-                // rather than forwarding raw text to the LLM (ROADMAP #36).
-                let cwd = std::env::current_dir().unwrap_or_default();
-                if let Some(prompt) = try_resolve_bare_skill_prompt(&cwd, &trimmed) {
-                    editor.push_history(input);
-                    cli.record_prompt_history(&trimmed);
-                    cli.run_turn(&prompt)?;
-                    continue;
-                }
-                editor.push_history(input);
-                cli.record_prompt_history(&trimmed);
-                cli.run_turn(&trimmed)?;
-            }
-            input::ReadOutcome::Cancel => {}
-            input::ReadOutcome::Exit => {
-                cli.persist_session()?;
-                break;
-            }
-        }
-    }
-
+    let status = status_context(None).ok();
+    let branch = status
+        .as_ref()
+        .and_then(|context| context.git_branch.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+    let config = tui::TuiConfig {
+        version: env!("CARGO_PKG_VERSION").to_string(),
+        agent: cli.model.clone(),
+        permission_mode: cli.permission_mode.as_str().to_string(),
+        branch,
+    };
+    tui::run(config, |input| {
+        let trimmed = input.trim();
+        cli.record_prompt_history(trimmed);
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let prompt =
+            try_resolve_bare_skill_prompt(&cwd, trimmed).unwrap_or_else(|| trimmed.to_string());
+        cli.run_turn_captured(&prompt)
+            .map_err(|error| error.to_string())
+    })?;
+    cli.persist_session()?;
     Ok(())
 }
 
@@ -8002,6 +7972,25 @@ impl LiveCli {
             CliOutputFormat::Text if compact => self.run_prompt_compact(input),
             CliOutputFormat::Text => self.run_turn(input),
             CliOutputFormat::Json => self.run_prompt_json(input),
+        }
+    }
+
+    fn run_turn_captured(&mut self, input: &str) -> Result<String, Box<dyn std::error::Error>> {
+        let (mut runtime, hook_abort_monitor) = self.prepare_turn_runtime(false)?;
+        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
+        let result = runtime.run_turn(input, Some(&mut permission_prompter));
+        hook_abort_monitor.stop();
+        match result {
+            Ok(summary) => {
+                let final_text = final_assistant_text(&summary);
+                self.replace_runtime(runtime)?;
+                self.persist_session()?;
+                Ok(final_text)
+            }
+            Err(error) => {
+                runtime.shutdown_plugins()?;
+                Err(Box::new(error))
+            }
         }
     }
 
