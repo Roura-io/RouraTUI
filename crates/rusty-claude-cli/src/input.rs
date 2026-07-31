@@ -100,7 +100,6 @@ impl Helper for SlashCommandHelper {}
 
 pub struct LineEditor {
     prompt: String,
-    footer: String,
     editor: Editor<SlashCommandHelper, DefaultHistory>,
 }
 
@@ -119,7 +118,6 @@ impl LineEditor {
 
         Self {
             prompt: prompt.into(),
-            footer: "\x1b[38;5;240m╰──────────────────────────────────────────────────────────────────────────────\x1b[0m".to_string(),
             editor,
         }
     }
@@ -149,10 +147,7 @@ impl LineEditor {
         }
 
         match self.editor.readline(&self.prompt) {
-            Ok(line) => {
-                println!("{}", self.footer);
-                Ok(ReadOutcome::Submit(line))
-            }
+            Ok(line) => Ok(ReadOutcome::Submit(line)),
             Err(ReadlineError::Interrupted) => {
                 let has_input = !self.current_line().is_empty();
                 self.finish_interrupted_read()?;
@@ -202,13 +197,6 @@ impl LineEditor {
     }
 }
 
-/// rouraTUI's composer prompt. Rustyline still owns editing, history,
-/// completion, and multiline behavior; this only supplies the visual shell.
-#[must_use]
-pub fn composer_prompt() -> &'static str {
-    "\x1b[38;5;240m╭─\x1b[0m \x1b[38;2;217;119;87m❯\x1b[0m "
-}
-
 fn slash_command_prefix(line: &str, pos: usize) -> Option<&str> {
     if pos != line.len() {
         return None;
@@ -233,19 +221,11 @@ fn normalize_completions(completions: Vec<String>) -> Vec<String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{composer_prompt, slash_command_prefix, LineEditor, SlashCommandHelper};
+    use super::{slash_command_prefix, LineEditor, SlashCommandHelper};
     use rustyline::completion::Completer;
     use rustyline::highlight::Highlighter;
     use rustyline::history::{DefaultHistory, History};
     use rustyline::Context;
-
-    #[test]
-    fn composer_uses_rouratui_coral_caret_and_rounded_border() {
-        let prompt = composer_prompt();
-        assert!(prompt.contains("╭─"));
-        assert!(prompt.contains('❯'));
-        assert!(prompt.contains("217;119;87"));
-    }
 
     #[test]
     fn extracts_terminal_slash_command_prefixes_with_arguments() {
