@@ -1,11 +1,13 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-# Build the release binary
-cargo build --release
+# Build only the user-facing CLI.
+cargo build --release -p rusty-claude-cli
 
-# Link to ~/.local/bin
+# Install the Rust migration under the rouraTUI product name. Keep the
+# imported kernel's historical command as a compatibility alias.
 mkdir -p "$HOME/.local/bin"
-ln -sf "$(pwd)/target/release/claw" "$HOME/.local/bin/claw"
+install -m 0755 "target/release/claw" "$HOME/.local/bin/rouratui"
+ln -sf "rouratui" "$HOME/.local/bin/claw"
 
-echo "✓ Claw installed to ~/.local/bin/claw"
+echo "✓ rouraTUI installed to ~/.local/bin/rouratui"

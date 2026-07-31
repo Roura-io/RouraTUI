@@ -1,4 +1,12 @@
-# 🦞 Claw Code — Rust Implementation
+# rouraTUI — Rust migration
+
+This repository is the production migration of rouraTUI from Go to Rust. The
+current alpha is built on the imported Claw Code Rust kernel while rouraTUI's
+existing local-first UX and integrations are ported behind it.
+
+The stable Go implementation and its release history are preserved on the
+`legacy/go-v1.2.1` branch. Rust alpha releases install as `rouratui`; the
+historical `claw` command remains available as a temporary compatibility alias.
 
 A high-performance Rust rewrite of the Claw Code CLI agent harness. Built for speed, safety, and native tool execution.
 
