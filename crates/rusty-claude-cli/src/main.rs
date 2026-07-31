@@ -7087,10 +7087,8 @@ fn run_repl(
     let resolved_model = resolve_repl_model(model)?;
     let mut cli = LiveCli::new(resolved_model, true, allowed_tools, permission_mode)?;
     cli.set_reasoning_effort(reasoning_effort);
-    let mut editor = input::LineEditor::new(
-        input::composer_prompt(),
-        cli.repl_completion_candidates().unwrap_or_default(),
-    );
+    let mut editor =
+        input::LineEditor::new("> ", cli.repl_completion_candidates().unwrap_or_default());
     println!("{}", cli.startup_banner());
     println!("{}", format_connected_line(&cli.model));
 
@@ -7715,19 +7713,15 @@ impl LiveCli {
             |path| path.display().to_string(),
         );
         format!(
-            "\x1b[38;5;240m╭──────────────────────────────────────────────────────────────────────────────╮\x1b[0m\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[1;38;2;217;119;87m✻ rouraTUI\x1b[0m  \x1b[2mv{}\x1b[0m\n\
-\x1b[38;5;240m│\x1b[0m\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mModel\x1b[0m        {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mPermissions\x1b[0m  {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mBranch\x1b[0m       {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mWorkspace\x1b[0m    {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mDirectory\x1b[0m    {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mSession\x1b[0m      {}\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2mAuto-save\x1b[0m    {}\n\
-\x1b[38;5;240m│\x1b[0m\n\
-\x1b[38;5;240m│\x1b[0m  \x1b[2m/help · ctrl-r history · tab completes · shift-enter newline\x1b[0m\n\
-\x1b[38;5;240m╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m",
+            "\x1b[1;38;2;217;119;87m✻ rouraTUI Code\x1b[0m  \x1b[2mv{}\x1b[0m\n\n\
+  \x1b[2mAgent\x1b[0m            {}\n\
+  \x1b[2mPermissions\x1b[0m      {}\n\
+  \x1b[2mBranch\x1b[0m           {}\n\
+  \x1b[2mWorkspace\x1b[0m        {}\n\
+  \x1b[2mDirectory\x1b[0m        {}\n\
+  \x1b[2mSession\x1b[0m          {}\n\
+  \x1b[2mAuto-save\x1b[0m        {}\n\n\
+  Type \x1b[1m/help\x1b[0m for commands · \x1b[2mCtrl-R\x1b[0m for history · \x1b[2mTab\x1b[0m for completions · \x1b[2mShift+Enter\x1b[0m for newline",
             env!("CARGO_PKG_VERSION"),
             self.model,
             self.permission_mode.as_str(),
@@ -7782,8 +7776,9 @@ impl LiveCli {
         let (mut runtime, hook_abort_monitor) = self.prepare_turn_runtime(true)?;
         let mut spinner = Spinner::new();
         let mut stdout = io::stdout();
+        println!("\x1b[1;38;2;217;119;87m{}\x1b[0m", self.model);
         spinner.tick(
-            "🦀 Thinking...",
+            "Thinking...",
             TerminalRenderer::new().color_theme(),
             &mut stdout,
         )?;
@@ -7794,14 +7789,10 @@ impl LiveCli {
             Ok(summary) => {
                 self.replace_runtime(runtime)?;
                 spinner.finish(
-                    "✨ Done",
+                    &format!("{} finished", self.model),
                     TerminalRenderer::new().color_theme(),
                     &mut stdout,
                 )?;
-                let final_text = final_assistant_text(&summary);
-                if !final_text.is_empty() {
-                    println!("{final_text}");
-                }
                 println!();
                 if let Some(event) = summary.auto_compaction {
                     println!(
