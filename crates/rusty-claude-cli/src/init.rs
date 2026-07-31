@@ -15,7 +15,7 @@ const STARTER_SETTINGS_JSON: &str = concat!(
     "  }\n",
     "}\n",
 );
-const GITIGNORE_COMMENT: &str = "# Claw Code local artifacts";
+const GITIGNORE_COMMENT: &str = "# rouraTUI Code local artifacts";
 const GITIGNORE_ENTRIES: [&str; 3] = [".claw/settings.local.json", ".claw/sessions/", ".clawhip/"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -240,7 +240,7 @@ pub(crate) fn render_init_claude_md(cwd: &Path) -> String {
     let mut lines = vec![
         "# CLAUDE.md".to_string(),
         String::new(),
-        "This file provides guidance to Claw Code (clawcode.dev) when working with code in this repository.".to_string(),
+        "This file provides guidance to rouraTUI Code (clawcode.dev) when working with code in this repository.".to_string(),
         String::new(),
     ];
 
@@ -444,7 +444,7 @@ mod tests {
         assert!(root.join(".claw.json").is_file());
         assert!(root.join("CLAUDE.md").is_file());
         assert_eq!(
-            fs::read_to_string(root.join(".claw.json")).expect("read claw json"),
+            fs::read_to_string(root.join(".claw.json")).expect("read rouratui json"),
             concat!(
                 "{\n",
                 "  \"permissions\": {\n",

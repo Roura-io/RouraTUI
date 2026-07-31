@@ -1,6 +1,16 @@
-# rouraTUI v2.0.0-alpha.3
+# rouraTUI v2.0.0-alpha.4
 
-This is the first runnable Rust migration release.
+This release restores the rouraTUI product identity on the imported Rust
+runtime, adds the compact conversation view and coral multiline composer, and
+introduces verified self-updates with `rouratui update`.
+
+## New in alpha.4
+
+- The package and executable are now named `rouratui`.
+- The interactive experience uses the rouraTUI conversation card and composer.
+- `rouratui update --check` checks the latest GitHub release.
+- `rouratui update` downloads the Apple silicon artifact, verifies its SHA-256
+  checksum, and atomically replaces the installed binary.
 
 ## Included
 
@@ -21,7 +31,7 @@ This is the first runnable Rust migration release.
 ## Alpha limitations
 
 - This is the kernel baseline, not full UX parity with the Go rouraTUI.
-- Several surfaces and configuration paths still use the inherited `claw`
+- Several surfaces and configuration paths still use the inherited `rouratui`
   naming internally.
 - The ratatui interface and rouraTUI-specific brief, Slack, network, Xcode, and
   gear integrations remain migration work.

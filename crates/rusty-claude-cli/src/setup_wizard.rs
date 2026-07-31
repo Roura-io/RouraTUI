@@ -61,7 +61,7 @@ pub fn run_setup_wizard() -> Result<(), Box<dyn std::error::Error>> {
     println!();
     println!("  \x1b[32mProvider saved to ~/.claw/settings.json\x1b[0m");
     println!(
-        "  Run \x1b[1m/model {}\x1b[0m or restart claw to activate.",
+        "  Run \x1b[1m/model {}\x1b[0m or restart rouratui to activate.",
         model.as_deref().unwrap_or(&kind)
     );
     println!();

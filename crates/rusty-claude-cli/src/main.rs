@@ -18,6 +18,7 @@ mod init;
 mod input;
 mod render;
 mod setup_wizard;
+mod update;
 
 use std::collections::BTreeSet;
 use std::env;
@@ -72,7 +73,7 @@ use tools::{
 
 const DEFAULT_MODEL: &str = "anthropic/claude-opus-4-7";
 
-/// #148: Model provenance for `claw status` JSON/text output. Records where
+/// #148: Model provenance for `rouratui status` JSON/text output. Records where
 /// the resolved model string came from so claws don't have to re-read argv
 /// to audit whether their `--model` flag was honored vs falling back to env
 /// or config or default.
@@ -281,8 +282,8 @@ const INTERNAL_PROGRESS_HEARTBEAT_INTERVAL: Duration = Duration::from_secs(3);
 const POST_TOOL_STALL_TIMEOUT: Duration = Duration::from_secs(10);
 const PRIMARY_SESSION_EXTENSION: &str = "jsonl";
 const LEGACY_SESSION_EXTENSION: &str = "json";
-const OFFICIAL_REPO_URL: &str = "https://github.com/ultraworkers/claw-code";
-const OFFICIAL_REPO_SLUG: &str = "ultraworkers/claw-code";
+const OFFICIAL_REPO_URL: &str = "https://github.com/elGordoRoura/rouratui";
+const OFFICIAL_REPO_SLUG: &str = "elGordoRoura/rouratui";
 const DEPRECATED_INSTALL_COMMAND: &str = "cargo install claw-code";
 const LATEST_SESSION_REFERENCE: &str = "latest";
 const SESSION_REFERENCE_ALIASES: &[&str] = &[LATEST_SESSION_REFERENCE, "last", "recent"];
@@ -411,7 +412,7 @@ fn main() {
             // #156: Add machine-readable error kind to text output so stderr observers
             // don't need to regex-scrape the prose.
             let kind = classify_error_kind(&message);
-            if message.contains("`claw --help`") {
+            if message.contains("`rouratui --help`") {
                 eprintln!(
                     "[error-kind: {kind}]
 error: {message}"
@@ -421,7 +422,7 @@ error: {message}"
                     "[error-kind: {kind}]
 error: {message}
 
-Run `claw --help` for usage."
+Run `rouratui --help` for usage."
                 );
             }
         }
@@ -546,13 +547,13 @@ fn classify_error_kind(message: &str) -> &'static str {
         // #765: removed subcommands (login, logout) — hint contains migration guidance
         "removed_subcommand"
     } else if message.starts_with("unknown subcommand:") {
-        // #785/#825: typo/unknown top-level subcommand (e.g. `claw dump` → did you mean dump-manifests?)
+        // #785/#825: typo/unknown top-level subcommand (e.g. `rouratui dump` → did you mean dump-manifests?)
         // Unified under command_not_found in #825.
         "command_not_found"
     } else if message.starts_with("unexpected extra arguments")
         || message.starts_with("unexpected_extra_args:")
     {
-        // #766: extra positionals after commands that take no arguments (e.g. claw diff)
+        // #766: extra positionals after commands that take no arguments (e.g. rouratui diff)
         // #784: export extra-positional errors use the typed prefix form
         "unexpected_extra_args"
     } else if message.starts_with("invalid_resume_argument:") {
@@ -641,7 +642,7 @@ fn fallback_hint_for_error_kind(kind: &str) -> Option<&'static str> {
             Some("You have hit the API rate limit. Wait and retry, or reduce request frequency.")
         }
         "missing_credentials" => {
-            Some("Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN before running claw.")
+            Some("Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN before running rouratui.")
         }
         "config_parse_error" => Some(
             "Fix the JSON syntax or schema in the referenced .claw/settings.json or .claw.json file, then rerun the command.",
@@ -651,22 +652,22 @@ fn fallback_hint_for_error_kind(kind: &str) -> Option<&'static str> {
             "Pass a path to a .jsonl session file, not a directory. Managed sessions live in .claw/sessions/.",
         ),
         "session_path_is_directory" => Some(
-            "--resume expects a .jsonl session file path, not a directory. Run `claw --output-format json /session list` to list managed sessions.",
+            "--resume expects a .jsonl session file path, not a directory. Run `rouratui --output-format json /session list` to list managed sessions.",
         ),
         // #793: plugins uninstall/enable/disable of non-existing plugin propagates through
         // the ? operator with no \n delimiter, so split_error_hint returns None.
-        "plugin_not_found" => Some("Run `claw plugins list` to see installed plugins."),
+        "plugin_not_found" => Some("Run `rouratui plugins list` to see installed plugins."),
         // #794: plugins install with a path that doesn't exist
         "plugin_source_not_found" => Some(
             "Check that the path or URL is correct. Use a local directory or a valid registry id.",
         ),
         // #795: skills install/show of a non-existing skill path or name
         "skill_not_found" => Some(
-            "Run `claw skills list` to see available skills, or `claw skills install <path>` to install a new one.",
+            "Run `rouratui skills list` to see available skills, or `rouratui skills install <path>` to install a new one.",
         ),
         // #795/#431: unsupported/invalid skills lifecycle input should include actionable local guidance.
         "unsupported_skills_action" => Some(
-            "Supported: list, show <name>, install <path>, uninstall <name>, help. Run `claw skills help` for details.",
+            "Supported: list, show <name>, install <path>, uninstall <name>, help. Run `rouratui skills help` for details.",
         ),
         "invalid_install_source" => Some(
             "Pass a local skill directory containing SKILL.md or a standalone markdown file.",
@@ -762,7 +763,7 @@ impl std::fmt::Display for InvalidOutputPathError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "invalid_output_path: {}: `{}`\nUsage: claw export [PATH] [--session SESSION] [--output PATH]",
+            "invalid_output_path: {}: `{}`\nUsage: rouratui export [PATH] [--session SESSION] [--output PATH]",
             self.reason.as_str(),
             self.path
         )
@@ -1033,6 +1034,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             output_format,
         } => print_system_prompt(cwd, date, &model, output_format)?,
         CliAction::Version { output_format } => print_version(output_format)?,
+        CliAction::Update {
+            check_only,
+            output_format,
+        } => update::run(check_only, output_format == CliOutputFormat::Json)?,
         CliAction::ResumeSession {
             session_path,
             commands,
@@ -1194,6 +1199,10 @@ enum CliAction {
     Version {
         output_format: CliOutputFormat,
     },
+    Update {
+        check_only: bool,
+        output_format: CliOutputFormat,
+    },
     SessionList {
         output_format: CliOutputFormat,
     },
@@ -1243,7 +1252,7 @@ enum CliAction {
     Setup {
         output_format: CliOutputFormat,
     },
-    // #146: `claw config` and `claw diff` are pure-local read-only
+    // #146: `rouratui config` and `rouratui diff` are pure-local read-only
     // introspection commands; wire them as standalone CLI subcommands.
     Config {
         section: Option<String>,
@@ -1286,7 +1295,7 @@ enum LocalHelpTopic {
     Doctor,
     Acp,
     // #141: extend the local-help pattern to every subcommand so
-    // `claw <subcommand> --help` has one consistent contract.
+    // `rouratui <subcommand> --help` has one consistent contract.
     Init,
     State,
     Resume,
@@ -1297,7 +1306,7 @@ enum LocalHelpTopic {
     SystemPrompt,
     DumpManifests,
     BootstrapPlan,
-    // #720: subsystem help topics so `claw help agents` etc. route to usage JSON
+    // #720: subsystem help topics so `rouratui help agents` etc. route to usage JSON
     Agents,
     Skills,
     Plugins,
@@ -1515,7 +1524,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                     && matches!(rest[0].as_str(), "prompt" | "commit" | "pr" | "issue") =>
             {
                 // `--help` following a subcommand that would otherwise forward
-                // the arg to the API (e.g. `claw prompt --help`) should show
+                // the arg to the API (e.g. `rouratui prompt --help`) should show
                 // top-level help instead. Subcommands that consume their own
                 // args (agents, mcp, plugins, skills) and local help-topic
                 // subcommands (status, sandbox, doctor, init, state, export,
@@ -1658,20 +1667,20 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 break;
             }
             "-p" => {
-                // Claw Code compat: -p "prompt" = one-shot prompt.
+                // rouraTUI Code compat: -p "prompt" = one-shot prompt.
                 // #755: consume exactly one token so subsequent flags like
                 // --model/--output-format are parsed normally instead of
                 // being swallowed into the prompt string (#117).
                 let next = args.get(index + 1).map(|s| s.as_str());
                 match next {
                     None | Some("") => {
-                        return Err("missing_prompt: -p requires a prompt string.\nUsage: claw -p <text>  or  claw prompt <text>".to_string());
+                        return Err("missing_prompt: -p requires a prompt string.\nUsage: rouratui -p <text>  or  rouratui prompt <text>".to_string());
                     }
                     Some(tok) if tok.starts_with('-') && tok != "--" => {
                         // Looks like a flag, not a prompt. Reject so the user
                         // knows to quote the literal text or use `--`.
                         return Err(format!(
-                            "missing_prompt: -p requires a prompt string before flags; got `{tok}`.\nUsage: claw -p <text> --model sonnet  or  claw -p -- {tok} (literal)"
+                            "missing_prompt: -p requires a prompt string before flags; got `{tok}`.\nUsage: rouratui -p <text> --model sonnet  or  rouratui -p -- {tok} (literal)"
                         ));
                     }
                     Some(tok) => {
@@ -1679,13 +1688,13 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                         let (prompt_text, skip) = if tok == "--" {
                             match args.get(index + 2) {
                                 Some(t) => (t.as_str(), 3usize),
-                                None => return Err("missing_prompt: -p -- requires a prompt string after `--`.\nUsage: claw -p -- <text>".to_string()),
+                                None => return Err("missing_prompt: -p -- requires a prompt string after `--`.\nUsage: rouratui -p -- <text>".to_string()),
                             }
                         } else {
                             (tok, 2usize)
                         };
                         if prompt_text.trim().is_empty() {
-                            return Err("missing_prompt: -p requires a non-empty prompt string.\nUsage: claw -p <text>  or  claw prompt <text>".to_string());
+                            return Err("missing_prompt: -p requires a non-empty prompt string.\nUsage: rouratui -p <text>  or  rouratui prompt <text>".to_string());
                         }
                         short_p_prompt = Some(prompt_text.to_string());
                         index += skip;
@@ -1694,7 +1703,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 }
             }
             "--print" => {
-                // Claw Code compat: --print makes output non-interactive
+                // rouraTUI Code compat: --print makes output non-interactive
                 output_format = CliOutputFormat::Text;
                 index += 1;
             }
@@ -1874,7 +1883,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             // Skip this guard in test builds (parse_args tests run in non-TTY context).
             #[cfg(not(test))]
             // #746: newline before remediation so split_error_hint populates hint field
-            return Err("interactive_only: claw requires an interactive terminal.\nStdin is not a TTY and no prompt was provided — pipe a prompt with `echo 'task' | claw` or run `claw` in an interactive terminal.".into());
+            return Err("interactive_only: rouratui requires an interactive terminal.\nStdin is not a TTY and no prompt was provided — pipe a prompt with `echo 'task' | rouratui` or run `rouratui` in an interactive terminal.".into());
         }
         return Ok(CliAction::Repl {
             model,
@@ -1894,12 +1903,12 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
     if rest.first().map(String::as_str) == Some("resume") {
         return parse_resume_args(&rest[1..], output_format, allow_broad_cwd);
     }
-    // #696: `claw compact` is the bare name of the interactive `/compact`
+    // #696: `rouratui compact` is the bare name of the interactive `/compact`
     // slash command, not a prompt. When extra args such as `--help` appear
     // after the word `compact`, the generic prompt fallback used to send
     // `compact --help` to provider startup and could hang under closed stdin /
     // JSON output. Fail closed before any provider, prompt, TUI, or spinner
-    // startup. `claw --resume SESSION.jsonl /compact` remains the supported
+    // startup. `rouratui --resume SESSION.jsonl /compact` remains the supported
     // non-interactive session compaction path.
     if rest.first().map(String::as_str) == Some("compact") {
         return Err(compact_interactive_only_error());
@@ -1916,7 +1925,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
     }
 
     // Keep config-backed defaults lazy so pure-local JSON surfaces (notably
-    // `claw --output-format json config`) can report config warnings
+    // `rouratui --output-format json config`) can report config warnings
     // structurally without an earlier default-resolution load writing prose
     // warnings to stderr.
     let permission_mode = || permission_mode_override.unwrap_or_else(default_permission_mode);
@@ -1940,7 +1949,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         let first = rest[0].as_str();
         if is_known_top_level_subcommand(first) && first != "prompt" {
             return Err(format!(
-                "invalid_flag_value: --compact is only supported with prompt mode.\nUsage: claw --compact \"<prompt>\" or echo \"<prompt>\" | claw --compact"
+                "invalid_flag_value: --compact is only supported with prompt mode.\nUsage: rouratui --compact \"<prompt>\" or echo \"<prompt>\" | rouratui --compact"
             ));
         }
     }
@@ -1957,8 +1966,8 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             output_format,
         }),
         // #145: `plugins` was routed through the prompt fallback because no
-        // top-level parser arm produced CliAction::Plugins. That made `claw
-        // plugins` (and `claw plugins --help`, `claw plugins list`, ...)
+        // top-level parser arm produced CliAction::Plugins. That made `rouratui
+        // plugins` (and `rouratui plugins --help`, `rouratui plugins list`, ...)
         // attempt an Anthropic network call, surfacing the misleading error
         // `missing Anthropic credentials` even though the command is purely
         // local introspection. Mirror `agents`/`mcp`/`skills`: action is the
@@ -1973,7 +1982,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if tail.len() > 2 {
                 // #797: append \n usage hint so split_error_hint extracts it (parity with #791 config fix)
                 return Err(format!(
-                    "unexpected extra arguments after `claw {} {}`: {}\nUsage: claw plugins [list|show <id>|install <id>|enable <id>|disable <id>|uninstall <id>|update <id>|help]",
+                    "unexpected extra arguments after `rouratui {} {}`: {}\nUsage: rouratui plugins [list|show <id>|install <id>|enable <id>|disable <id>|uninstall <id>|update <id>|help]",
                     rest[0],
                     tail[..2].join(" "),
                     tail[2..].join(" ")
@@ -1988,7 +1997,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         // #146: `config` is pure-local read-only introspection (merges
         // `.claw.json` + `.claw/settings.json` from disk, no network, no
         // state mutation). Previously callers had to spin up a session with
-        // `claw --resume SESSION.jsonl /config` to see their own config,
+        // `rouratui --resume SESSION.jsonl /config` to see their own config,
         // which is synthetic friction. Accepts an optional section name
         // (env|hooks|model|plugins) matching the slash command shape.
         "config" => {
@@ -1997,7 +2006,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if tail.len() > 1 {
                 // #791: append \n hint so split_error_hint extracts it and hint is non-null
                 return Err(format!(
-                    "unexpected extra arguments after `claw config {}`: {}\nUsage: claw config [env|hooks|model|plugins|mcp|settings]",
+                    "unexpected extra arguments after `rouratui config {}`: {}\nUsage: rouratui config [env|hooks|model|plugins|mcp|settings]",
                     tail[0],
                     tail[1..].join(" ")
                 ));
@@ -2018,20 +2027,20 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             }
             Ok(CliAction::Diff { output_format })
         }
-        // `claw permissions <mode>` falls through to the LLM when called
+        // `rouratui permissions <mode>` falls through to the LLM when called
         // with a subcommand argument because parse_single_word_command_alias
         // only intercepts the bare single-word form. Catch all multi-word
         // forms here and return a structured guidance error so no network
         // call or session is created.
         "permissions" => Err(
-            "`claw permissions` is a slash command. Start `claw` and run `/permissions` inside the REPL.\n  Usage  /permissions [read-only|workspace-write|danger-full-access]"
+            "`rouratui permissions` is a slash command. Start `rouratui` and run `/permissions` inside the REPL.\n  Usage  /permissions [read-only|workspace-write|danger-full-access]"
                 .to_string(),
         ),
-        // #767: `claw session bogus` bypassed parse_single_word_command_alias (rest.len()>1),
+        // #767: `rouratui session bogus` bypassed parse_single_word_command_alias (rest.len()>1),
         // had no match arm, and fell to CliAction::Prompt — reaching the credential gate
         // instead of a structured error. Mirror the guard on `permissions`.
         "session" => {
-            // #449: `claw session list` is a pure local filesystem read that
+            // #449: `rouratui session list` is a pure local filesystem read that
             // requires no API credentials. Route directly to SessionList instead
             // of falling through to the resume/auth path.
             if rest.get(1).map(|s| s.as_str()) == Some("list") {
@@ -2039,26 +2048,26 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             } else {
                 let action_hint = rest.get(1).map_or(String::new(), |a| format!(" (got: `{a}`)" ));
                 Err(format!(
-                    "interactive_only: `claw session` is a slash command{action_hint}.\nUse `claw --resume SESSION.jsonl /session <action>` or start `claw` and run `/session [list|exists|switch|fork|delete]`."
+                    "interactive_only: `rouratui session` is a slash command{action_hint}.\nUse `rouratui --resume SESSION.jsonl /session <action>` or start `rouratui` and run `/session [list|exists|switch|fork|delete]`."
                 ))
             }
         }
         // #770: same fallthrough gap as #767 — these slash commands had no multi-arg match arm
         // and fell to CliAction::Prompt reaching the credential gate when called with args.
         "cost" => Err(
-            "interactive_only: `claw cost` is a slash command.\nUse `claw --resume SESSION.jsonl /cost` or start `claw` and run `/cost`."
+            "interactive_only: `rouratui cost` is a slash command.\nUse `rouratui --resume SESSION.jsonl /cost` or start `rouratui` and run `/cost`."
                 .to_string(),
         ),
         "clear" => Err(
-            "interactive_only: `claw clear` is a slash command.\nUse `claw --resume SESSION.jsonl /clear [--confirm]` or start `claw` and run `/clear`."
+            "interactive_only: `rouratui clear` is a slash command.\nUse `rouratui --resume SESSION.jsonl /clear [--confirm]` or start `rouratui` and run `/clear`."
                 .to_string(),
         ),
         "memory" => Err(
-            "interactive_only: `claw memory` is a slash command.\nStart `claw` and run `/memory` inside the REPL."
+            "interactive_only: `rouratui memory` is a slash command.\nStart `rouratui` and run `/memory` inside the REPL."
                 .to_string(),
         ),
         "ultraplan" => Err(
-            "interactive_only: `claw ultraplan` is a slash command.\nStart `claw` and run `/ultraplan` inside the REPL."
+            "interactive_only: `rouratui ultraplan` is a slash command.\nStart `rouratui` and run `/ultraplan` inside the REPL."
                 .to_string(),
         ),
         "model" | "models" => {
@@ -2066,7 +2075,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             let action = tail.first().cloned();
             if tail.len() > 1 {
                 return Err(format!(
-                    "unexpected extra arguments after `claw {} {}`: {}\nUsage: claw {} [help] [--output-format json]",
+                    "unexpected extra arguments after `rouratui {} {}`: {}\nUsage: rouratui {} [help] [--output-format json]",
                     rest[0],
                     tail[0],
                     tail[1..].join(" "),
@@ -2080,15 +2089,15 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
         }
         // #771: usage/stats/fork are slash-only verbs with no multi-arg match arms
         "usage" => Err(
-            "interactive_only: `claw usage` is a slash command.\nUse `claw --resume SESSION.jsonl /usage` or start `claw` and run `/usage`."
+            "interactive_only: `rouratui usage` is a slash command.\nUse `rouratui --resume SESSION.jsonl /usage` or start `rouratui` and run `/usage`."
                 .to_string(),
         ),
         "stats" => Err(
-            "interactive_only: `claw stats` is a slash command.\nUse `claw --resume SESSION.jsonl /stats` or start `claw` and run `/stats`."
+            "interactive_only: `rouratui stats` is a slash command.\nUse `rouratui --resume SESSION.jsonl /stats` or start `rouratui` and run `/stats`."
                 .to_string(),
         ),
         "fork" => Err(
-            "interactive_only: `claw fork` is a slash command.\nStart `claw` and run `/session fork [branch-name]` inside the REPL."
+            "interactive_only: `rouratui fork` is a slash command.\nStart `rouratui` and run `/session fork [branch-name]` inside the REPL."
                 .to_string(),
         ),
         "skills" => {
@@ -2133,12 +2142,29 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
                 })
             } else {
                 Err(format!(
-                    "unexpected extra arguments after `claw settings`: {}\nUsage: claw settings [help] [--output-format json]",
+                    "unexpected extra arguments after `rouratui settings`: {}\nUsage: rouratui settings [help] [--output-format json]",
                     tail.join(" ")
                 ))
             }
         }
         "system-prompt" => parse_system_prompt_args(&rest[1..], model, output_format),
+        "update" => {
+            let tail = &rest[1..];
+            let check_only = match tail {
+                [] => false,
+                [flag] if flag == "--check" => true,
+                _ => {
+                    return Err(
+                        "unexpected arguments for update.\nUsage: rouratui update [--check]"
+                            .to_string(),
+                    )
+                }
+            };
+            Ok(CliAction::Update {
+                check_only,
+                output_format,
+            })
+        }
         "acp" => parse_acp_args(&rest[1..], output_format),
         "login" | "logout" => Err(removed_auth_surface_error(rest[0].as_str())),
         "init" => {
@@ -2146,7 +2172,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if rest.len() > 1 {
                 let extra = rest[1..].join(" ");
                 return Err(format!(
-                    "unexpected extra arguments after `claw init`: {extra}\nUsage: claw init [--cwd <dir>] [--date <date>] [--session <session-id>]"
+                    "unexpected extra arguments after `rouratui init`: {extra}\nUsage: rouratui init [--cwd <dir>] [--date <date>] [--session <session-id>]"
                 ));
             }
             Ok(CliAction::Init { output_format })
@@ -2155,7 +2181,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if rest.len() > 1 {
                 let extra = rest[1..].join(" ");
                 return Err(format!(
-                    "unexpected extra arguments after `claw setup`: {extra}\nUsage: claw setup"
+                    "unexpected extra arguments after `rouratui setup`: {extra}\nUsage: rouratui setup"
                 ));
             }
             Ok(CliAction::Setup { output_format })
@@ -2192,7 +2218,7 @@ fn parse_args(args: &[String]) -> Result<CliAction, String> {
             if prompt.trim().is_empty() {
                 // #750/#823/#423: provide error_kind-compatible prefix + \n for hint extraction.
                 return Err("missing_prompt: prompt subcommand requires a prompt string.
-Usage: claw prompt <text>  or  echo '<text>' | claw prompt".to_string());
+Usage: rouratui prompt <text>  or  echo '<text>' | rouratui prompt".to_string());
             }
             Ok(CliAction::Prompt {
                 prompt,
@@ -2237,13 +2263,13 @@ Usage: claw prompt <text>  or  echo '<text>' | claw prompt".to_string());
                     }
                 }
                 message.push_str(
-                    "\nRun `claw --help` for the full list. If you meant to send a prompt literally, use `claw prompt <text>`.",
+                    "\nRun `rouratui --help` for the full list. If you meant to send a prompt literally, use `rouratui prompt <text>`.",
                 );
                 return Err(message);
             }
             // #147: guard empty/whitespace-only prompts at the fallthrough
             // path the same way `"prompt"` arm above does. Without this,
-            // `claw ""`, `claw "   "`, and `claw "" ""` silently route to
+            // `rouratui ""`, `rouratui "   "`, and `rouratui "" ""` silently route to
             // the Anthropic call and surface a misleading
             // `missing Anthropic credentials` error (or burn API tokens on
             // an empty prompt when credentials are present).
@@ -2251,7 +2277,7 @@ Usage: claw prompt <text>  or  echo '<text>' | claw prompt".to_string());
             if joined.trim().is_empty() {
                 // #798: add \n hint so split_error_hint extracts it (was empty_prompt + null)
                 return Err(
-                    "empty prompt: provide a subcommand or a non-empty prompt string.\nUsage: claw <subcommand> or claw -p <prompt>. Run `claw --help` for the full list."
+                    "empty prompt: provide a subcommand or a non-empty prompt string.\nUsage: rouratui <subcommand> or rouratui -p <prompt>. Run `rouratui --help` for the full list."
                         .to_string(),
                 );
             }
@@ -2343,7 +2369,7 @@ fn parse_single_word_command_alias(
             // "doctor --help -h" is valid, routed to parse_local_help_action() instead
             return None;
         }
-        // #720: `claw help <topic>` — when the verb is "help" and exactly one
+        // #720: `rouratui help <topic>` — when the verb is "help" and exactly one
         // non-flag argument follows, try to route to the topic's handler.
         if verb == "help" && rest.len() == 2 {
             let topic_name = rest[1].as_str();
@@ -2393,12 +2419,12 @@ fn parse_single_word_command_alias(
             msg.push_str("\nDid you mean `--output-format json`?");
         } else {
             // #752: generic fallback hint so cli_parse errors always have non-null hint
-            msg.push_str(&format!("\nRun `claw {} --help` for usage.", verb));
+            msg.push_str(&format!("\nRun `rouratui {} --help` for usage.", verb));
         }
         return Some(Err(msg));
     }
 
-    // #720: `claw help <topic>` — when `help` is the verb and a topic follows,
+    // #720: `rouratui help <topic>` — when `help` is the verb and a topic follows,
     // try to route to the topic's help handler instead of erroring.
     if rest.len() == 2 && rest[0] == "help" {
         let topic_name = rest[1].as_str();
@@ -2438,7 +2464,7 @@ fn parse_single_word_command_alias(
         return Some(Ok(CliAction::Help { output_format }));
     }
 
-    // #453: fire guard for multi-word CLI subcommands too (claw cost list, claw model list, etc.)
+    // #453: fire guard for multi-word CLI subcommands too (rouratui cost list, rouratui model list, etc.)
     // For slash commands that are commonly used as prompts (explain, cost, tokens, etc.),
     // only fire the guard when there's exactly one token.
     if rest.is_empty() {
@@ -2508,11 +2534,11 @@ fn bare_slash_command_guidance(command_name: &str) -> Option<String> {
     // #745: newline before remediation text so split_error_hint populates hint field
     let guidance = if slash_command.resume_supported {
         format!(
-            "`claw {command_name}` is a slash command.\nUse `claw --resume SESSION.jsonl /{canonical_name}` or start `claw` and run `/{canonical_name}`."
+            "`rouratui {command_name}` is a slash command.\nUse `rouratui --resume SESSION.jsonl /{canonical_name}` or start `rouratui` and run `/{canonical_name}`."
         )
     } else {
         format!(
-            "`claw {command_name}` is a slash command.\nStart `claw` and run `/{canonical_name}` inside the REPL."
+            "`rouratui {command_name}` is a slash command.\nStart `rouratui` and run `/{canonical_name}` inside the REPL."
         )
     };
     // #772: help text still mentions the alias, but the remediation shows canonical form
@@ -2521,20 +2547,20 @@ fn bare_slash_command_guidance(command_name: &str) -> Option<String> {
 
 fn compact_interactive_only_error() -> String {
     // #749: newline before remediation so split_error_hint populates hint field
-    "interactive_only: `claw compact` is an interactive/session command.\nStart `claw` and run `/compact`, or use `claw --resume SESSION.jsonl /compact` to compact an existing session."
+    "interactive_only: `rouratui compact` is an interactive/session command.\nStart `rouratui` and run `/compact`, or use `rouratui --resume SESSION.jsonl /compact` to compact an existing session."
         .to_string()
 }
 
 fn removed_auth_surface_error(command_name: &str) -> String {
     // #765: two-line format so split_error_hint() extracts hint into JSON envelope
     format!(
-        "`claw {command_name}` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
+        "`rouratui {command_name}` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
     )
 }
 
 fn unexpected_diff_args_error(extra: &[String]) -> String {
     format!(
-        "unexpected extra arguments after `claw diff`: {}\nUsage: claw diff",
+        "unexpected extra arguments after `rouratui diff`: {}\nUsage: rouratui diff",
         extra.join(" ")
     )
 }
@@ -2544,7 +2570,7 @@ fn parse_acp_args(args: &[String], output_format: CliOutputFormat) -> Result<Cli
         [] => Ok(CliAction::Acp { output_format }),
         [subcommand] if subcommand == "serve" => Ok(CliAction::Acp { output_format }),
         _ => Err(String::from(
-            "unsupported_acp_invocation: unsupported ACP invocation. Use `claw acp` or `claw acp serve`.\nACP/Zed editor integration is not implemented yet; `claw acp serve` reports status only.",
+            "unsupported_acp_invocation: unsupported ACP invocation. Use `rouratui acp` or `rouratui acp serve`.\nACP/Zed editor integration is not implemented yet; `rouratui acp serve` reports status only.",
         )),
     }
 }
@@ -2640,7 +2666,7 @@ fn parse_direct_slash_cli_action(
             // unknown_slash_command.
             if matches!(name.as_str(), "approve" | "yes" | "y" | "deny" | "no" | "n") {
                 Err(format!(
-                    "interactive_only: /{name} requires an active tool call in the REPL.\nStart `claw` and use /{name} to approve or deny a pending tool execution."
+                    "interactive_only: /{name} requires an active tool call in the REPL.\nStart `rouratui` and use /{name} to approve or deny a pending tool execution."
                 ))
             } else {
                 Err(format_unknown_direct_slash_command(&name))
@@ -2660,12 +2686,12 @@ fn parse_direct_slash_cli_action(
             if is_resume_safe {
                 format!(
                     // #738: newline before remediation so split_error_hint populates hint field
-                    "interactive_only: slash command {command_name} requires a live session.\nStart `claw` and run it there, or use `claw --resume SESSION.jsonl {command_name}` / `claw --resume {latest} {command_name}`.",
+                    "interactive_only: slash command {command_name} requires a live session.\nStart `rouratui` and run it there, or use `rouratui --resume SESSION.jsonl {command_name}` / `rouratui --resume {latest} {command_name}`.",
                     latest = LATEST_SESSION_REFERENCE,
                 )
             } else {
                 format!(
-                    "interactive_only: slash command {command_name} requires a live REPL session.\nStart `claw` and run it there."
+                    "interactive_only: slash command {command_name} requires a live REPL session.\nStart `rouratui` and run it there."
                 )
             }
         }),
@@ -2676,7 +2702,7 @@ fn parse_direct_slash_cli_action(
 
 fn format_unknown_option(option: &str) -> String {
     if option == "--" {
-        return "end_of_flags: `--` terminates flag parsing. Pass literal prompt text after it, for example `claw -- \"-literal prompt\"`.\nRun `claw --help` for usage.".to_string();
+        return "end_of_flags: `--` terminates flag parsing. Pass literal prompt text after it, for example `rouratui -- \"-literal prompt\"`.\nRun `rouratui --help` for usage.".to_string();
     }
     let mut message = format!("unknown option: {option}");
     if let Some(suggestion) = suggest_closest_term(option, CLI_OPTION_SUGGESTIONS) {
@@ -2684,7 +2710,7 @@ fn format_unknown_option(option: &str) -> String {
         message.push_str(suggestion);
         message.push('?');
     }
-    message.push_str("\nRun `claw --help` for usage.");
+    message.push_str("\nRun `rouratui --help` for usage.");
     message
 }
 
@@ -2702,7 +2728,7 @@ fn format_unknown_direct_slash_command(name: &str) -> String {
         message.push('\n');
         message.push_str(note);
     }
-    message.push_str("\nRun `claw --help` for CLI usage, or start `claw` and use /help.");
+    message.push_str("\nRun `rouratui --help` for CLI usage, or start `rouratui` and use /help.");
     message
 }
 
@@ -2726,7 +2752,7 @@ fn format_unknown_slash_command(name: &str) -> String {
 fn omc_compatibility_note_for_unknown_slash_command(name: &str) -> Option<&'static str> {
     name.starts_with("oh-my-claudecode:")
         .then_some(
-            "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. `claw` does not yet load plugin slash commands, Claude statusline stdin, or OMC session hooks.",
+            "Compatibility note: `/oh-my-claudecode:*` is a Claude Code/OMC plugin command. `rouratui` does not yet load plugin slash commands, Claude statusline stdin, or OMC session hooks.",
         )
 }
 
@@ -2806,6 +2832,7 @@ fn is_known_top_level_subcommand(value: &str) -> bool {
         value,
         "help"
             | "version"
+            | "update"
             | "status"
             | "sandbox"
             | "doctor"
@@ -3011,7 +3038,7 @@ fn allowed_tools_missing_error() -> String {
 }
 
 fn compact_missing_argument_error() -> String {
-    "missing_argument: --compact requires prompt text, piped stdin, or a subcommand. argument: prompt or subcommand\nUsage: claw --compact <prompt>  or  echo '<prompt>' | claw --compact"
+    "missing_argument: --compact requires prompt text, piped stdin, or a subcommand. argument: prompt or subcommand\nUsage: rouratui --compact <prompt>  or  echo '<prompt>' | rouratui --compact"
         .to_string()
 }
 
@@ -3196,12 +3223,12 @@ fn parse_system_prompt_args(
                 // #99: validate --cwd path exists and is a directory
                 if !cwd.exists() {
                     return Err(format!(
-                        "invalid_cwd: path '{value}' does not exist.\nUsage: claw system-prompt --cwd <existing-directory>"
+                        "invalid_cwd: path '{value}' does not exist.\nUsage: rouratui system-prompt --cwd <existing-directory>"
                     ));
                 }
                 if !cwd.is_dir() {
                     return Err(format!(
-                        "invalid_cwd: path '{value}' is not a directory.\nUsage: claw system-prompt --cwd <existing-directory>"
+                        "invalid_cwd: path '{value}' is not a directory.\nUsage: rouratui system-prompt --cwd <existing-directory>"
                     ));
                 }
                 index += 2;
@@ -3232,9 +3259,9 @@ fn parse_system_prompt_args(
                 // #790: use unknown_option: prefix + \n hint so classify_error_kind returns
                 // unknown_option and split_error_hint extracts the remediation text.
                 let hint = if other == "--json" {
-                    "Did you mean `--output-format json`? Usage: claw system-prompt [--cwd <dir>] [--date <YYYY-MM-DD>] [--output-format text|json]".to_string()
+                    "Did you mean `--output-format json`? Usage: rouratui system-prompt [--cwd <dir>] [--date <YYYY-MM-DD>] [--output-format text|json]".to_string()
                 } else {
-                    "Usage: claw system-prompt [--cwd <dir>] [--date <YYYY-MM-DD>] [--output-format text|json]".to_string()
+                    "Usage: rouratui system-prompt [--cwd <dir>] [--date <YYYY-MM-DD>] [--output-format text|json]".to_string()
                 };
                 return Err(format!(
                     "unknown_option: unknown system-prompt option: {other}.\n{hint}"
@@ -3272,7 +3299,7 @@ fn parse_export_args(args: &[String], output_format: CliOutputFormat) -> Result<
             "--output" | "-o" => {
                 let value = args
                     .get(index + 1)
-                    .ok_or_else(|| format!("missing_flag_value: missing value for {}.\nUsage: claw export [PATH] [--session SESSION] [--output PATH]", args[index]))?;
+                    .ok_or_else(|| format!("missing_flag_value: missing value for {}.\nUsage: rouratui export [PATH] [--session SESSION] [--output PATH]", args[index]))?;
                 output_path = Some(PathBuf::from(value));
                 index += 2;
             }
@@ -3281,7 +3308,7 @@ fn parse_export_args(args: &[String], output_format: CliOutputFormat) -> Result<
                 index += 1;
             }
             other if other.starts_with('-') => {
-                return Err(format!("unknown_option: unknown export option: {other}.\nRun `claw export --help` for usage."));
+                return Err(format!("unknown_option: unknown export option: {other}.\nRun `rouratui export --help` for usage."));
             }
             other if output_path.is_none() => {
                 output_path = Some(PathBuf::from(other));
@@ -3289,7 +3316,7 @@ fn parse_export_args(args: &[String], output_format: CliOutputFormat) -> Result<
             }
             other => {
                 // #784: use typed prefix so classify_error_kind returns unexpected_extra_args
-                return Err(format!("unexpected_extra_args: unexpected export argument: {other}.\nUsage: claw export [PATH] [--session SESSION] [--output PATH]"));
+                return Err(format!("unexpected_extra_args: unexpected export argument: {other}.\nUsage: rouratui export [PATH] [--session SESSION] [--output PATH]"));
             }
         }
     }
@@ -3312,7 +3339,7 @@ fn parse_dump_manifests_args(
         if arg == "--manifests-dir" {
             let value = args
                 .get(index + 1)
-                .ok_or_else(|| String::from("missing_flag_value: --manifests-dir requires a path.\nUsage: claw dump-manifests --manifests-dir <path> [--output-format json]"))?;
+                .ok_or_else(|| String::from("missing_flag_value: --manifests-dir requires a path.\nUsage: rouratui dump-manifests --manifests-dir <path> [--output-format json]"))?;
             manifests_dir = Some(PathBuf::from(value));
             index += 2;
             continue;
@@ -3320,13 +3347,13 @@ fn parse_dump_manifests_args(
         if let Some(value) = arg.strip_prefix("--manifests-dir=") {
             if value.is_empty() {
                 // #786: empty --manifests-dir= is also a missing value
-                return Err(String::from("missing_flag_value: --manifests-dir requires a path.\nUsage: claw dump-manifests --manifests-dir <path> [--output-format json]"));
+                return Err(String::from("missing_flag_value: --manifests-dir requires a path.\nUsage: rouratui dump-manifests --manifests-dir <path> [--output-format json]"));
             }
             manifests_dir = Some(PathBuf::from(value));
             index += 1;
             continue;
         }
-        return Err(format!("unknown_option: unknown dump-manifests option: {arg}.\nRun `claw dump-manifests --help` for usage."));
+        return Err(format!("unknown_option: unknown dump-manifests option: {arg}.\nRun `rouratui dump-manifests --help` for usage."));
     }
 
     Ok(CliAction::DumpManifests {
@@ -3367,7 +3394,7 @@ fn parse_resume_args(
         if current_command.is_empty() {
             // #768: typed prefix + \n hint so split_error_hint() extracts hint into JSON envelope
             return Err(format!(
-                "invalid_resume_argument: `{token}` is not a slash command.\nUsage: claw --resume <session-id|latest> /<slash-command>  (e.g. /compact, /status)"
+                "invalid_resume_argument: `{token}` is not a slash command.\nUsage: rouratui --resume <session-id|latest> /<slash-command>  (e.g. /compact, /status)"
             ));
         }
 
@@ -3755,7 +3782,7 @@ fn run_setup() -> Result<(), Box<dyn std::error::Error>> {
     setup_wizard::run_setup_wizard()
 }
 
-/// Starts a minimal Model Context Protocol server that exposes claw's
+/// Starts a minimal Model Context Protocol server that exposes rouratui's
 /// built-in tools over stdio.
 ///
 /// Tool descriptors come from [`tools::mvp_tool_specs`] and calls are
@@ -3770,18 +3797,18 @@ fn run_worker_state(output_format: CliOutputFormat) -> Result<(), Box<dyn std::e
     if !state_path.exists() {
         // #139: this error used to say "run a worker first" without telling
         // callers how to run one. "worker" is an internal concept (there is
-        // no `claw worker` subcommand), so claws/CI had no discoverable path
+        // no `rouratui worker` subcommand), so claws/CI had no discoverable path
         // from the error to a fix. Emit an actionable, structured error that
         // names the two concrete commands that produce worker state.
         //
         // Format in both text and JSON modes is stable so scripts can match:
         //   error: no worker state file found at <path>
         //     Hint: worker state is written by the interactive REPL or a non-interactive prompt.
-        //     Run:   claw               # start the REPL (writes state on first turn)
-        //     Or:    claw prompt <text> # run one non-interactive turn
-        //     Then rerun: claw state [--output-format json]
+        //     Run:   rouratui               # start the REPL (writes state on first turn)
+        //     Or:    rouratui prompt <text> # run one non-interactive turn
+        //     Then rerun: rouratui state [--output-format json]
         return Err(format!(
-            "no worker state file found at {path}\n  Hint: worker state is written by the interactive REPL or a non-interactive prompt.\n  Run:   claw               # start the REPL (writes state on first turn)\n  Or:    claw prompt <text> # run one non-interactive turn\n  Then rerun: claw state [--output-format json]",
+            "no worker state file found at {path}\n  Hint: worker state is written by the interactive REPL or a non-interactive prompt.\n  Run:   rouratui               # start the REPL (writes state on first turn)\n  Or:    rouratui prompt <text> # run one non-interactive turn\n  Then rerun: rouratui state [--output-format json]",
             path = state_path.display()
         )
         .into());
@@ -3812,7 +3839,7 @@ fn run_mcp_serve() -> Result<(), Box<dyn std::error::Error>> {
         .collect();
 
     let spec = McpServerSpec {
-        server_name: "claw".to_string(),
+        server_name: "rouratui".to_string(),
         server_version: VERSION.to_string(),
         tools,
         tool_handler: Box::new(execute_tool),
@@ -3888,7 +3915,7 @@ fn check_auth_health() -> DiagnosticCheck {
                     token_set.scopes.join(",")
                 }
             ),
-            "Suggested action  set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN; `claw login` is removed"
+            "Suggested action  set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN; `rouratui login` is removed"
                 .to_string(),
         ])
         .with_hint("Set ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN env var. The saved OAuth token is no longer accepted.")
@@ -4094,7 +4121,9 @@ fn check_config_health(
                 .map(|path| format!("Discovered file   {path}"))
                 .collect()
         })
-        .with_hint("Fix the JSON syntax error in the listed config file, then rerun `claw doctor`.")
+        .with_hint(
+            "Fix the JSON syntax error in the listed config file, then rerun `rouratui doctor`.",
+        )
         .with_data(Map::from_iter([
             ("discovered_files".to_string(), json!(discovered_paths)),
             (
@@ -4140,7 +4169,7 @@ fn check_mcp_validation_health(summary: &McpValidationSummary) -> DiagnosticChec
         },
     )
     .with_hint(if summary.has_invalid_servers() {
-        "Inspect `claw mcp list --output-format json` invalid_servers and fix each rejected mcpServers entry."
+        "Inspect `rouratui mcp list --output-format json` invalid_servers and fix each rejected mcpServers entry."
     } else {
         ""
     })
@@ -4189,7 +4218,7 @@ fn check_hook_validation_health(summary: &HookValidationSummary) -> DiagnosticCh
         },
     )
     .with_hint(if summary.has_invalid_hooks() {
-        "Inspect `claw status --output-format json` hook_validation.invalid_hooks and fix each rejected hooks entry."
+        "Inspect `rouratui status --output-format json` hook_validation.invalid_hooks and fix each rejected hooks entry."
     } else {
         ""
     })
@@ -4279,7 +4308,7 @@ fn check_install_source_health() -> DiagnosticCheck {
         "Recommended path  build from this repo or use the upstream binary documented in README.md"
             .to_string(),
         format!(
-            "Deprecated crate  `{DEPRECATED_INSTALL_COMMAND}` installs a deprecated stub and does not provide the `claw` binary"
+            "Deprecated crate  `{DEPRECATED_INSTALL_COMMAND}` installs a deprecated stub and does not provide the `rouratui` binary"
         )
             .to_string(),
     ])
@@ -4449,9 +4478,9 @@ fn check_memory_health(context: &StatusContext) -> DiagnosticCheck {
         },
     )
     .with_hint(if has_outside_project {
-        "Inspect workspace.memory_files in `claw status --output-format json`; move unintended ancestor instructions inside the git project or run from the intended workspace root."
+        "Inspect workspace.memory_files in `rouratui status --output-format json`; move unintended ancestor instructions inside the git project or run from the intended workspace root."
     } else if has_unloaded {
-        "Move instructions into CLAUDE.md, CLAW.md, or AGENTS.md within the current workspace ancestry, or inspect workspace.memory_files in `claw status --output-format json`."
+        "Move instructions into CLAUDE.md, CLAW.md, or AGENTS.md within the current workspace ancestry, or inspect workspace.memory_files in `rouratui status --output-format json`."
     } else {
         ""
     })
@@ -4727,7 +4756,7 @@ fn dump_manifests(
 }
 
 const DUMP_MANIFESTS_USAGE_HINT: &str =
-    "Usage: claw dump-manifests [--manifests-dir <path>] [--output-format json]";
+    "Usage: rouratui dump-manifests [--manifests-dir <path>] [--output-format json]";
 
 // Internal function for testing that accepts a workspace directory path.
 fn dump_manifests_at_path(
@@ -5100,7 +5129,7 @@ fn resume_session(session_path: &Path, commands: &[String], output_format: CliOu
                             "status": "error",
                             "error_kind": "unsupported_command",
                             "error": format!("/{cmd_root} is not yet implemented in this build"),
-                            "hint": "This command is not available in the current build. Update claw or use a different command.",
+                            "hint": "This command is not available in the current build. Update rouratui or use a different command.",
                             "exit_code": 2,
                             "command": raw_command,
                         })
@@ -5143,7 +5172,7 @@ fn resume_session(session_path: &Path, commands: &[String], output_format: CliOu
                             "status": "error",
                             "error_kind": "cli_parse",
                             "error": error.to_string(),
-                            "hint": "Run `claw --help` for usage.",
+                            "hint": "Run `rouratui --help` for usage.",
                             "exit_code": 2,
                             "command": raw_command,
                         })
@@ -6334,7 +6363,7 @@ fn build_boot_preflight_snapshot(
         trusted_roots_count: trusted_roots.len(),
         required_binaries: vec![
             BinaryPreflight {
-                name: "claw",
+                name: "rouratui",
                 available: env::current_exe().is_ok_and(|path| path.exists()),
             },
             BinaryPreflight {
@@ -6544,7 +6573,7 @@ fn run_resume_command(
             Ok(ResumeCommandOutcome {
                 session: cleared,
                 message: Some(format!(
-                    "Session cleared\n  Mode             resumed session reset\n  Previous session {previous_session_id}\n  Backup           {}\n  Resume previous  claw --resume {}\n  Session file     {}",
+                    "Session cleared\n  Mode             resumed session reset\n  Previous session {previous_session_id}\n  Backup           {}\n  Resume previous  rouratui --resume {}\n  Session file     {}",
                     backup_path.display(),
                     backup_path.display(),
                     session_path.display()
@@ -6718,7 +6747,7 @@ fn run_resume_command(
                 // error_kind:interactive_only + non-null hint instead of unknown+null.
                 let skill_name = args.as_deref().unwrap_or("<skill>");
                 return Err(format!(
-                    "interactive_only: /skills {skill_name} invocation requires a live session.\nStart `claw` and run `/skills {skill_name}` inside the REPL, or use `claw -p <prompt>` with skill context."
+                    "interactive_only: /skills {skill_name} invocation requires a live session.\nStart `rouratui` and run `/skills {skill_name}` inside the REPL, or use `rouratui -p <prompt>` with skill context."
                 ).into());
             }
             let cwd = env::current_dir()?;
@@ -6736,7 +6765,7 @@ fn run_resume_command(
                     // emits error_kind:interactive_only + non-null hint instead of unknown+null.
                     // Orchestrators can now detect this and switch to a live REPL instead of retrying.
                     return Err(format!(
-                        "interactive_only: /plugins {action} requires a live session to reload the plugin runtime.\nStart `claw` and run `/plugins {action}` inside the REPL, or use `claw plugins {action}` as a direct CLI command."
+                        "interactive_only: /plugins {action} requires a live session to reload the plugin runtime.\nStart `rouratui` and run `/plugins {action}` inside the REPL, or use `rouratui plugins {action}` as a direct CLI command."
                     ).into());
                 }
                 _ => {}
@@ -6967,9 +6996,9 @@ fn enforce_broad_cwd_policy(
     if is_interactive {
         // Interactive mode: print warning and ask for confirmation
         eprintln!(
-            "Warning: claw is running from a very broad directory ({}).\n\
+            "Warning: rouratui is running from a very broad directory ({}).\n\
              The agent can read and search everything under this path.\n\
-             Consider running from inside your project: cd /path/to/project && claw",
+             Consider running from inside your project: cd /path/to/project && rouratui",
             cwd.display()
         );
         eprint!("Continue anyway? [y/N]: ");
@@ -6986,10 +7015,10 @@ fn enforce_broad_cwd_policy(
     } else {
         // Non-interactive mode: exit with error (JSON or text)
         let message = format!(
-            "claw is running from a very broad directory ({}). \
+            "rouratui is running from a very broad directory ({}). \
              The agent can read and search everything under this path. \
              Use --allow-broad-cwd to proceed anyway, \
-             or run from inside your project: cd /path/to/project && claw",
+             or run from inside your project: cd /path/to/project && rouratui",
             cwd.display()
         );
         match output_format {
@@ -7058,8 +7087,10 @@ fn run_repl(
     let resolved_model = resolve_repl_model(model)?;
     let mut cli = LiveCli::new(resolved_model, true, allowed_tools, permission_mode)?;
     cli.set_reasoning_effort(reasoning_effort);
-    let mut editor =
-        input::LineEditor::new("> ", cli.repl_completion_candidates().unwrap_or_default());
+    let mut editor = input::LineEditor::new(
+        input::composer_prompt(),
+        cli.repl_completion_candidates().unwrap_or_default(),
+    );
     println!("{}", cli.startup_banner());
     println!("{}", format_connected_line(&cli.model));
 
@@ -7684,21 +7715,20 @@ impl LiveCli {
             |path| path.display().to_string(),
         );
         format!(
-            "\x1b[38;5;196m\
- ██████╗██╗      █████╗ ██╗    ██╗\n\
-██╔════╝██║     ██╔══██╗██║    ██║\n\
-██║     ██║     ███████║██║ █╗ ██║\n\
-██║     ██║     ██╔══██║██║███╗██║\n\
-╚██████╗███████╗██║  ██║╚███╔███╔╝\n\
- ╚═════╝╚══════╝╚═╝  ╚═╝ ╚══╝╚══╝\x1b[0m \x1b[38;5;208mCode\x1b[0m 🦞\n\n\
-  \x1b[2mModel\x1b[0m            {}\n\
-  \x1b[2mPermissions\x1b[0m      {}\n\
-  \x1b[2mBranch\x1b[0m           {}\n\
-  \x1b[2mWorkspace\x1b[0m        {}\n\
-  \x1b[2mDirectory\x1b[0m        {}\n\
-  \x1b[2mSession\x1b[0m          {}\n\
-  \x1b[2mAuto-save\x1b[0m        {}\n\n\
-  Type \x1b[1m/help\x1b[0m for commands · \x1b[1m/status\x1b[0m for live context · \x1b[2m/resume latest\x1b[0m jumps back to the newest session · \x1b[1m/diff\x1b[0m then \x1b[1m/commit\x1b[0m to ship · \x1b[2mTab\x1b[0m for workflow completions · \x1b[2mShift+Enter\x1b[0m for newline",
+            "\x1b[38;5;240m╭──────────────────────────────────────────────────────────────────────────────╮\x1b[0m\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[1;38;2;217;119;87m✻ rouraTUI\x1b[0m  \x1b[2mv{}\x1b[0m\n\
+\x1b[38;5;240m│\x1b[0m\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mModel\x1b[0m        {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mPermissions\x1b[0m  {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mBranch\x1b[0m       {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mWorkspace\x1b[0m    {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mDirectory\x1b[0m    {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mSession\x1b[0m      {}\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2mAuto-save\x1b[0m    {}\n\
+\x1b[38;5;240m│\x1b[0m\n\
+\x1b[38;5;240m│\x1b[0m  \x1b[2m/help · ctrl-r history · tab completes · shift-enter newline\x1b[0m\n\
+\x1b[38;5;240m╰──────────────────────────────────────────────────────────────────────────────╯\x1b[0m",
+            env!("CARGO_PKG_VERSION"),
             self.model,
             self.permission_mode.as_str(),
             git_branch,
@@ -8553,7 +8583,7 @@ impl LiveCli {
         args: Option<&str>,
         output_format: CliOutputFormat,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // `claw mcp serve` starts a stdio MCP server exposing claw's built-in
+        // `rouratui mcp serve` starts a stdio MCP server exposing rouratui's built-in
         // tools. All other `mcp` subcommands fall through to the existing
         // configured-server reporter (`list`, `status`, ...).
         if matches!(args.map(str::trim), Some("serve")) {
@@ -8625,17 +8655,17 @@ impl LiveCli {
                             "action": "list",
                             "status": "error",
                             "error_kind": "cli_parse",
-                            "error": format!("unknown option for `claw plugins list`: {filter}"),
-                            "message": format!("unknown option for `claw plugins list`: {filter}"),
+                            "error": format!("unknown option for `rouratui plugins list`: {filter}"),
+                            "message": format!("unknown option for `rouratui plugins list`: {filter}"),
                             "unexpected": filter,
-                            "hint": "Usage: claw plugins list [<filter>]\nFilters are id substrings, not flags.",
+                            "hint": "Usage: rouratui plugins list [<filter>]\nFilters are id substrings, not flags.",
                             "exit_code": 1,
                         });
                         println!("{}", serde_json::to_string_pretty(&obj)?);
                         std::process::exit(1);
                     }
                     return Err(format!(
-                        "unknown option for `claw plugins list`: {filter}\nUsage: claw plugins list [<filter>]\nFilters are id substrings, not flags."
+                        "unknown option for `rouratui plugins list`: {filter}\nUsage: rouratui plugins list [<filter>]\nFilters are id substrings, not flags."
                     ).into());
                 }
             }
@@ -8664,7 +8694,7 @@ impl LiveCli {
                         });
                         if !found {
                             return Err(format!(
-                                "plugin_not_found: plugin '{}' not found\nRun `claw plugins list` to see available plugins.",
+                                "plugin_not_found: plugin '{}' not found\nRun `rouratui plugins list` to see available plugins.",
                                 name
                             ).into());
                         }
@@ -8683,7 +8713,7 @@ impl LiveCli {
                         "status": "ok",
                         "unexpected": null,
                         "usage": {
-                            "direct_cli": "claw plugins [list|show <id>|install <id>|enable <id>|disable <id>|uninstall <id>|update <id>|help]",
+                            "direct_cli": "rouratui plugins [list|show <id>|install <id>|enable <id>|disable <id>|uninstall <id>|update <id>|help]",
                             "slash_command": "/plugins [list|show <id>|install <id>|enable <id>|disable <id>|uninstall <id>|update <id>|help]",
                         },
                         "cwd": cwd_str,
@@ -8745,7 +8775,7 @@ impl LiveCli {
                                 // #734: parity with skills show which always emits a message field
                                 "message": format!("plugin '{}' not found", name),
                                 // #760: hint so callers know how to enumerate available plugins
-                                "hint": "Run `claw plugins list` to see available plugins.",
+                                "hint": "Run `rouratui plugins list` to see available plugins.",
                             });
                             println!("{}", serde_json::to_string_pretty(&obj)?);
                             // #789: exit 1 on not-found so automation can rely on exit code
@@ -9294,7 +9324,7 @@ fn run_resumed_session_command(
         }
         Some("exists") => {
             let Some(target) = target else {
-                return Err("/session exists requires a session id.\nUsage: claw --resume <session> /session exists <session-id>".into());
+                return Err("/session exists requires a session id.\nUsage: rouratui --resume <session> /session exists <session-id>".into());
             };
             let value = session_exists_json(target, &session.session_id)?;
             let exists = value
@@ -9313,7 +9343,7 @@ fn run_resumed_session_command(
         }
         Some("delete") => {
             let Some(target) = target else {
-                return Err("/session delete requires a session id.\nUsage: claw --resume <session> /session delete <session-id> --force".into());
+                return Err("/session delete requires a session id.\nUsage: rouratui --resume <session> /session delete <session-id> --force".into());
             };
             Ok(ResumeCommandOutcome {
                 session: session.clone(),
@@ -9330,7 +9360,7 @@ fn run_resumed_session_command(
         }
         Some("delete-force") => {
             let Some(target) = target else {
-                return Err("/session delete requires a session id.\nUsage: claw --resume <session> /session delete <session-id> --force".into());
+                return Err("/session delete requires a session id.\nUsage: rouratui --resume <session> /session delete <session-id> --force".into());
             };
             let handle = resolve_session_reference(target)?;
             if handle.id == session.session_id || handle.path == session_path {
@@ -9364,7 +9394,7 @@ fn run_resumed_session_command(
         Some(switch_or_fork @ ("switch" | "fork")) => Ok(ResumeCommandOutcome {
             session: session.clone(),
             message: Some(format!(
-                "/session {switch_or_fork} requires an interactive REPL.\nUsage: claw (then /session {switch_or_fork} <id>)"
+                "/session {switch_or_fork} requires an interactive REPL.\nUsage: rouratui (then /session {switch_or_fork} <id>)"
             )),
             json: Some(serde_json::json!({
                 "kind": "error",
@@ -9372,7 +9402,7 @@ fn run_resumed_session_command(
                 "status": "error",
                 "action": switch_or_fork,
                 "error": format!("/session {switch_or_fork} requires an interactive REPL"),
-                "hint": format!("Start a new claw session and use /session {switch_or_fork} <id> interactively"),
+                "hint": format!("Start a new rouratui session and use /session {switch_or_fork} <id> interactively"),
             })),
         }),
         Some(other) => Err(format!("unsupported_resumed_command: /session {other} is not supported in resume mode.\nSupported: list, exists, delete").into()),
@@ -9420,7 +9450,7 @@ fn render_session_list(active_session_id: &str) -> Result<String, Box<dyn std::e
 }
 
 /// #449: credentials-free session list that works without API keys.
-/// `claw session list --output-format json` should work in CI/offline.
+/// `rouratui session list --output-format json` should work in CI/offline.
 fn run_session_list(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::Error>> {
     let sessions = list_managed_sessions().unwrap_or_default();
     let session_ids: Vec<String> = sessions.iter().map(|s| s.id.clone()).collect();
@@ -9744,7 +9774,7 @@ fn status_context(
     // #456: count only paths that exist on disk, matching check_config_health behavior.
     let discovered_config_files = loader.discover().iter().filter(|e| e.path.exists()).count();
     // #143: degrade gracefully on config parse failure rather than hard-fail.
-    // `claw doctor` already does this; `claw status` now matches that contract
+    // `rouratui doctor` already does this; `rouratui status` now matches that contract
     // so that one malformed `mcpServers.*` entry doesn't take down the whole
     // health surface (workspace, git, model, permission, sandbox can still be
     // reported independently).
@@ -9854,7 +9884,7 @@ fn format_status_report(
     let mut blocks: Vec<String> = Vec::new();
     if let Some(err) = context.config_load_error.as_deref() {
         blocks.push(format!(
-            "Config load error\n  Status           fail\n  Summary          runtime config failed to load; reporting partial status\n  Details          {err}\n  Hint             `claw doctor` classifies config parse errors; fix the listed field and rerun"
+            "Config load error\n  Status           fail\n  Summary          runtime config failed to load; reporting partial status\n  Details          {err}\n  Hint             `rouratui doctor` classifies config parse errors; fix the listed field and rerun"
         ));
     }
     // #148: render Model source line after Model, showing where the string
@@ -10115,104 +10145,104 @@ fn sandbox_json_value(status: &runtime::SandboxStatus) -> serde_json::Value {
 fn render_help_topic(topic: LocalHelpTopic) -> String {
     match topic {
         LocalHelpTopic::Status => "Status
-  Usage            claw status [--output-format <format>]
+  Usage            rouratui status [--output-format <format>]
   Purpose          show the local workspace snapshot without entering the REPL
   Output           model, permissions, git state, config files, and sandbox status
   Formats          text (default), json
-  Related          /status · claw --resume latest /status"
+  Related          /status · rouratui --resume latest /status"
             .to_string(),
         LocalHelpTopic::Sandbox => "Sandbox
-  Usage            claw sandbox [--output-format <format>]
+  Usage            rouratui sandbox [--output-format <format>]
   Purpose          inspect the resolved sandbox and isolation state for the current directory
   Output           namespace, network, filesystem, and fallback details
   Formats          text (default), json
-  Related          /sandbox · claw status"
+  Related          /sandbox · rouratui status"
             .to_string(),
         LocalHelpTopic::Doctor => "Doctor
-  Usage            claw doctor [--output-format <format>]
+  Usage            rouratui doctor [--output-format <format>]
   Purpose          diagnose local auth, config, workspace, sandbox, and build metadata
   Output           local-only health report; no provider request or session resume required
   Formats          text (default), json
-  Related          /doctor · claw --resume latest /doctor"
+  Related          /doctor · rouratui --resume latest /doctor"
             .to_string(),
         LocalHelpTopic::Acp => "ACP / Zed
-  Usage            claw acp [serve] [--output-format <format>]
-  Aliases          claw --acp · claw -acp
+  Usage            rouratui acp [serve] [--output-format <format>]
+  Aliases          rouratui --acp · rouratui -acp
   Purpose          explain the current editor-facing ACP/Zed launch contract without starting the runtime
   Status           discoverability only; `serve` is a status alias and does not launch a daemon yet
   Formats          text (default), json
-  Related          ROADMAP #64a (discoverability) · ROADMAP #76 (real ACP support) · claw --help"
+  Related          ROADMAP #64a (discoverability) · ROADMAP #76 (real ACP support) · rouratui --help"
             .to_string(),
         LocalHelpTopic::Init => "Init
-  Usage            claw init [--output-format <format>]
+  Usage            rouratui init [--output-format <format>]
   Purpose          create .claw/settings.json, .claw.json, .gitignore, and CLAUDE.md in the current project
   Output           per-artifact created/updated/partial/deferred/skipped status (idempotent: safe to re-run)
   Formats          text (default), json
-  Related          claw status · claw doctor"
+  Related          rouratui status · rouratui doctor"
             .to_string(),
         LocalHelpTopic::State => "State
-  Usage            claw state [--output-format <format>]
+  Usage            rouratui state [--output-format <format>]
   Purpose          read .claw/worker-state.json written by the interactive REPL or a one-shot prompt
   Output           worker id, model, permissions, session reference (text or json)
   Formats          text (default), json
-  Produces state   `claw` (interactive REPL) or `claw prompt <text>` (one non-interactive turn)
-  Observes state   `claw state` reads; clawhip/CI may poll this file without HTTP
+  Produces state   `rouratui` (interactive REPL) or `rouratui prompt <text>` (one non-interactive turn)
+  Observes state   `rouratui state` reads; clawhip/CI may poll this file without HTTP
   Exit codes       0 if state file exists and parses; 1 with actionable hint otherwise
-  Related          claw status · ROADMAP #139 (this worker-concept contract)"
+  Related          rouratui status · ROADMAP #139 (this worker-concept contract)"
             .to_string(),
         LocalHelpTopic::Resume => format!(
-            "Resume\n  Usage            claw resume [session-path|session-id|{LATEST_SESSION_REFERENCE}] [/slash-command ...] [--output-format <format>]\n  Alias            claw --resume [session-path|session-id|{LATEST_SESSION_REFERENCE}]\n  Purpose          restore or inspect a saved session without starting a new provider turn\n  Output           session restore or resume-safe command output; missing sessions return session_not_found\n  Formats          text (default), json\n  Related          /resume · /session list · claw --resume {LATEST_SESSION_REFERENCE} /status"
+            "Resume\n  Usage            rouratui resume [session-path|session-id|{LATEST_SESSION_REFERENCE}] [/slash-command ...] [--output-format <format>]\n  Alias            rouratui --resume [session-path|session-id|{LATEST_SESSION_REFERENCE}]\n  Purpose          restore or inspect a saved session without starting a new provider turn\n  Output           session restore or resume-safe command output; missing sessions return session_not_found\n  Formats          text (default), json\n  Related          /resume · /session list · rouratui --resume {LATEST_SESSION_REFERENCE} /status"
         ),
         LocalHelpTopic::Session => "Session
-  Usage            claw session --help [--output-format <format>]
+  Usage            rouratui session --help [--output-format <format>]
   Purpose          show /session command guidance without loading config, credentials, or a session
   Actions          list · exists <id> · switch <id> · fork <name> · delete <id>
-  Direct use       run /session in the REPL or claw --resume SESSION.jsonl /session <action>
+  Direct use       run /session in the REPL or rouratui --resume SESSION.jsonl /session <action>
   Formats          text (default), json
-  Related          claw resume · claw export · .claw/sessions/"
+  Related          rouratui resume · rouratui export · .claw/sessions/"
             .to_string(),
         LocalHelpTopic::Compact => "Compact
-  Usage            claw compact --help [--output-format <format>]
+  Usage            rouratui compact --help [--output-format <format>]
   Purpose          show compaction guidance without loading config, credentials, or a session
-  Direct use       run /compact in the REPL or claw --resume SESSION.jsonl /compact
+  Direct use       run /compact in the REPL or rouratui --resume SESSION.jsonl /compact
   Output           compaction removes older tool-detail messages when the selected session is large enough
   Formats          text (default), json
-  Related          claw resume · /compact · /status"
+  Related          rouratui resume · /compact · /status"
             .to_string(),
         LocalHelpTopic::Export => "Export
-  Usage            claw export [--session <id|latest>] [--output <path>] [--output-format <format>]
+  Usage            rouratui export [--session <id|latest>] [--output <path>] [--output-format <format>]
   Purpose          serialize a managed session to JSON for review, transfer, or archival
   Defaults         --session latest (most recent managed session in .claw/sessions/)
   Formats          text (default), json
-  Related          /session list · claw --resume latest"
+  Related          /session list · rouratui --resume latest"
             .to_string(),
         LocalHelpTopic::Version => "Version
-  Usage            claw version [--output-format <format>]
-  Aliases          claw --version · claw -V
-  Purpose          print the claw CLI version and build metadata
+  Usage            rouratui version [--output-format <format>]
+  Aliases          rouratui --version · rouratui -V
+  Purpose          print the rouratui CLI version and build metadata
   Formats          text (default), json
-  Related          claw doctor (full build/auth/config diagnostic)"
+  Related          rouratui doctor (full build/auth/config diagnostic)"
             .to_string(),
         LocalHelpTopic::SystemPrompt => "System Prompt
-  Usage            claw system-prompt [--cwd <path>] [--date YYYY-MM-DD] [--output-format <format>]
-  Purpose          render the resolved system prompt that `claw` would send for the given cwd + date
+  Usage            rouratui system-prompt [--cwd <path>] [--date YYYY-MM-DD] [--output-format <format>]
+  Purpose          render the resolved system prompt that `rouratui` would send for the given cwd + date
   Options          --cwd overrides the workspace dir · --date injects a deterministic date stamp
   Formats          text (default), json
-  Related          claw doctor · claw dump-manifests"
+  Related          rouratui doctor · rouratui dump-manifests"
             .to_string(),
         LocalHelpTopic::DumpManifests => "Dump Manifests
-  Usage            claw dump-manifests [--manifests-dir <path>] [--output-format <format>]
+  Usage            rouratui dump-manifests [--manifests-dir <path>] [--output-format <format>]
   Purpose          emit every skill/agent/tool manifest the resolver would load for the current cwd
   Options          --manifests-dir scopes discovery to a specific directory
   Formats          text (default), json
-  Related          claw skills · claw agents · claw doctor"
+  Related          rouratui skills · rouratui agents · rouratui doctor"
             .to_string(),
         LocalHelpTopic::BootstrapPlan => "Bootstrap Plan
-  Usage            claw bootstrap-plan [--output-format <format>]
+  Usage            rouratui bootstrap-plan [--output-format <format>]
   Purpose          list the ordered startup phases the CLI would execute before dispatch
   Output           phase names (text) or structured phase list (json) — primary output is the plan itself
   Formats          text (default), json
-  Related          claw doctor · claw status"
+  Related          rouratui doctor · rouratui status"
             .to_string(),
         LocalHelpTopic::Agents => commands::handle_agents_slash_command(
             Some("--help"),
@@ -10225,50 +10255,50 @@ fn render_help_topic(topic: LocalHelpTopic) -> String {
         )
         .unwrap_or_else(|_| "skills help unavailable".to_string()),
         LocalHelpTopic::Plugins => "Plugins
-  Usage            claw plugins [list|show <name>|install <path>|enable <name>|disable <name>|uninstall <name>]
+  Usage            rouratui plugins [list|show <name>|install <path>|enable <name>|disable <name>|uninstall <name>]
   Purpose          manage lifecycle of plugins that extend tool and hook capabilities
   Formats          text (default), json
-  Related          /plugins · claw plugins --help"
+  Related          /plugins · rouratui plugins --help"
             .to_string(),
         LocalHelpTopic::Mcp => "MCP Servers
-  Usage            claw mcp [list|show <server>] [--output-format <format>]
+  Usage            rouratui mcp [list|show <server>] [--output-format <format>]
   Purpose          inspect configured MCP servers and their connection status
   Formats          text (default), json
-  Related          /mcp · claw mcp list"
+  Related          /mcp · rouratui mcp list"
             .to_string(),
         LocalHelpTopic::Config => "Config
-  Usage            claw config [section] [--output-format <format>]
+  Usage            rouratui config [section] [--output-format <format>]
   Purpose          show effective runtime configuration (model, hooks, plugins, env)
   Formats          text (default), json
-  Related          /config · claw doctor"
+  Related          /config · rouratui doctor"
             .to_string(),
         LocalHelpTopic::Model => "Models
-  Usage            claw models [help] [--output-format <format>]
-  Aliases          claw model
+  Usage            rouratui models [help] [--output-format <format>]
+  Aliases          rouratui model
   Purpose          show bounded local model command guidance without entering the REPL
   Output           supported model-selection surfaces and current config model value
   Formats          text (default), json
-  Related          /model · claw config model · claw status"
+  Related          /model · rouratui config model · rouratui status"
             .to_string(),
         LocalHelpTopic::Settings => "Settings
-  Usage            claw settings [help] [--output-format <format>]
+  Usage            rouratui settings [help] [--output-format <format>]
   Purpose          show effective settings/config using the local config envelope
-  Output           same as claw config settings; no provider request or session resume required
+  Output           same as rouratui config settings; no provider request or session resume required
   Formats          text (default), json
-  Related          claw config · claw doctor"
+  Related          rouratui config · rouratui doctor"
             .to_string(),
         LocalHelpTopic::Diff => "Diff
-  Usage            claw diff [--output-format <format>]
+  Usage            rouratui diff [--output-format <format>]
   Purpose          show the diff of changes relative to the expected base commit
   Formats          text (default), json
   Related          /diff · ROADMAP #148"
             .to_string(),
         LocalHelpTopic::Setup => "Setup
-  Usage            claw setup
+  Usage            rouratui setup
   Aliases          /setup (inside the REPL)
   Purpose          run the interactive provider setup wizard to configure API key, model, and base URL
   Output           writes provider settings to ~/.claw/settings.json (0600 permissions)
-  Related          /model · /config · claw doctor"
+  Related          /model · /config · rouratui doctor"
             .to_string(),
     }
 }
@@ -10311,7 +10341,7 @@ fn print_models(
     }
     if let Some(action) = action {
         return Err(format!(
-            "unsupported_models_action: unsupported models action: {action}.\nUsage: claw models [help] [--output-format json]"
+            "unsupported_models_action: unsupported models action: {action}.\nUsage: rouratui models [help] [--output-format json]"
         )
         .into());
     }
@@ -10338,7 +10368,7 @@ fn print_models(
             } else {
                 println!("  Config model     <unset>");
             }
-            println!("  Usage            claw --model <provider/model> prompt <text>");
+            println!("  Usage            rouratui --model <provider/model> prompt <text>");
         }
         CliOutputFormat::Json => {
             println!(
@@ -10358,7 +10388,7 @@ fn print_models(
                     "local_only": true,
                     "requires_credentials": false,
                     "requires_provider_request": false,
-                    "message": "Use --model <provider/model> or configure a model in claw settings."
+                    "message": "Use --model <provider/model> or configure a model in rouratui settings."
                 }))?
             );
         }
@@ -10373,7 +10403,7 @@ fn render_export_help_json() -> serde_json::Value {
         "status": "ok",
         "topic": "export",
         "command": "export",
-        "usage": "claw export [--session <id|latest>] [--output <path>] [--output-format <format>]",
+        "usage": "rouratui export [--session <id|latest>] [--output <path>] [--output-format <format>]",
         "purpose": "serialize a managed session to JSON for review, transfer, or archival",
         "defaults": {
             "session": LATEST_SESSION_REFERENCE,
@@ -10407,7 +10437,7 @@ fn render_export_help_json() -> serde_json::Value {
                 "description": "show help for the export command"
             }
         ],
-        "related": ["/session list", "claw --resume latest"]
+        "related": ["/session list", "rouratui --resume latest"]
     })
 }
 
@@ -10419,7 +10449,7 @@ fn render_doctor_help_json() -> serde_json::Value {
         "topic": "doctor",
         "command": "doctor",
         "schema_version": "1.0",
-        "usage": "claw doctor [--output-format <format>]",
+        "usage": "rouratui doctor [--output-format <format>]",
         "purpose": "diagnose local auth, config, workspace memory, permissions, sandbox, boot preflight, and build metadata",
         "formats": ["text", "json"],
         "local_only": true,
@@ -10444,7 +10474,7 @@ fn render_doctor_help_json() -> serde_json::Value {
                 "description": "show help for the doctor command without running diagnostics"
             }
         ],
-        "related": ["/doctor", "claw --resume latest /doctor"],
+        "related": ["/doctor", "rouratui --resume latest /doctor"],
         "message": render_help_topic(LocalHelpTopic::Doctor),
     })
 }
@@ -10597,7 +10627,7 @@ fn print_help_topic(
 }
 
 fn acp_status_message() -> &'static str {
-    "ACP/Zed editor integration is not implemented in claw-code yet. `claw acp serve` reports status only and does not launch a daemon or JSON-RPC endpoint. Use the normal terminal surfaces for now."
+    "ACP/Zed editor integration is not implemented in claw-code yet. `rouratui acp serve` reports status only and does not launch a daemon or JSON-RPC endpoint. Use the normal terminal surfaces for now."
 }
 
 fn acp_status_json() -> serde_json::Value {
@@ -10622,7 +10652,7 @@ fn acp_status_json() -> serde_json::Value {
                 "session_control_schema",
                 "event_report_schema"
             ],
-            "stable_status_surface": "claw acp [serve] --output-format json",
+            "stable_status_surface": "rouratui acp [serve] --output-format json",
             "unsupported_invocation_kind": "unsupported_acp_invocation"
         },
         "aliases": ["acp", "--acp", "-acp"],
@@ -10633,7 +10663,7 @@ fn print_acp_status(output_format: CliOutputFormat) -> Result<(), Box<dyn std::e
     match output_format {
         CliOutputFormat::Text => {
             println!(
-                "ACP / Zed\n  Status           not implemented\n  Launch           `claw acp serve` reports status only; no editor daemon or JSON-RPC endpoint is available yet\n  Today            use `claw prompt`, the REPL, or `claw doctor` for local verification\n  Message          {}",
+                "ACP / Zed\n  Status           not implemented\n  Launch           `rouratui acp serve` reports status only; no editor daemon or JSON-RPC endpoint is available yet\n  Today            use `rouratui prompt`, the REPL, or `rouratui doctor` for local verification\n  Message          {}",
                 acp_status_message()
             );
         }
@@ -10849,7 +10879,7 @@ fn render_config_json(
                 // .hint get actionable guidance instead of null
                 let hint = if matches!(other, "list" | "show" | "info") {
                     format!(
-                        "'claw config {other}' is not a subcommand. To list all config: `claw config`. To inspect a section: `claw config <section>` where section is one of: env, hooks, model, plugins, mcp, sandbox, permissions, skills, agents, settings."
+                        "'rouratui config {other}' is not a subcommand. To list all config: `rouratui config`. To inspect a section: `rouratui config <section>` where section is one of: env, hooks, model, plugins, mcp, sandbox, permissions, skills, agents, settings."
                     )
                 } else {
                     format!(
@@ -11052,9 +11082,9 @@ fn init_json_value(report: &crate::init::InitReport, message: &str) -> serde_jso
         && report.artifacts_with_status(InitStatus::Updated).is_empty()
         && report.artifacts_with_status(InitStatus::Partial).is_empty();
     let hint = if already_initialized {
-        "Workspace already initialised. Run `claw doctor` to verify health, or edit CLAUDE.md to customise guidance."
+        "Workspace already initialised. Run `rouratui doctor` to verify health, or edit CLAUDE.md to customise guidance."
     } else {
-        "Review and tailor CLAUDE.md to your project, then run `claw doctor` to verify the workspace."
+        "Review and tailor CLAUDE.md to your project, then run `rouratui doctor` to verify the workspace."
     };
     json!({
         "kind": "init",
@@ -11561,7 +11591,7 @@ fn render_version_report() -> String {
     let branch = GIT_BRANCH.unwrap_or("unknown");
     let dirty = GIT_DIRTY.unwrap_or("unknown");
     format!(
-        "Claw Code\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Branch           {branch}\n  Dirty            {dirty}\n  Target           {target}\n  Build date       {DEFAULT_DATE}"
+        "rouraTUI Code\n  Version          {VERSION}\n  Git SHA          {git_sha}\n  Branch           {branch}\n  Dirty            {dirty}\n  Target           {target}\n  Build date       {DEFAULT_DATE}"
     )
 }
 
@@ -11964,11 +11994,11 @@ fn plugins_command_payload_from_result(
     };
     let message = match config_load_error.as_deref() {
         Some(error) => format!(
-            "Config load error\n  Status           fail\n  Summary          runtime config failed to load; reporting partial plugins view\n  Details          {error}\n  Hint             `claw doctor` classifies config parse errors; fix the listed field and rerun\n\n{}",
+            "Config load error\n  Status           fail\n  Summary          runtime config failed to load; reporting partial plugins view\n  Details          {error}\n  Hint             `rouratui doctor` classifies config parse errors; fix the listed field and rerun\n\n{}",
             result.message
         ),
         None if mcp_validation.has_invalid_servers() => format!(
-            "MCP validation\n  Status           warn\n  Summary          {} MCP server entries are invalid; reporting plugins with valid MCP siblings only\n  Hint             Inspect `claw mcp list --output-format json` invalid_servers and fix each rejected mcpServers entry.\n\n{}",
+            "MCP validation\n  Status           warn\n  Summary          {} MCP server entries are invalid; reporting plugins with valid MCP siblings only\n  Hint             Inspect `rouratui mcp list --output-format json` invalid_servers and fix each rejected mcpServers entry.\n\n{}",
             mcp_validation.invalid_count(),
             result.message
         ),
@@ -12595,8 +12625,8 @@ impl AnthropicRuntimeClient {
         // so we can explicitly apply `api::read_base_url()` — that
         // reads `ANTHROPIC_BASE_URL` and is required for the local
         // mock-server test harness
-        // (`crates/rusty-claude-cli/tests/compact_output.rs`) to point
-        // claw at its fake Anthropic endpoint. We also attach a
+        // (`crates/rouratui-cli/tests/compact_output.rs`) to point
+        // rouratui at its fake Anthropic endpoint. We also attach a
         // session-scoped prompt cache on the Anthropic path; the
         // prompt cache is Anthropic-only so non-Anthropic variants
         // skip it.
@@ -13044,7 +13074,7 @@ fn format_context_window_blocked_error(session_id: &str, error: &api::ApiError) 
     lines.push("Recovery".to_string());
     lines.push("  Compact          /compact".to_string());
     lines.push(format!(
-        "  Resume compact   claw --resume {session_id} /compact"
+        "  Resume compact   rouratui --resume {session_id} /compact"
     ));
     lines.push("  Fresh session    /clear --confirm".to_string());
     lines.push(
@@ -14080,17 +14110,17 @@ fn convert_messages(messages: &[ConversationMessage]) -> Vec<InputMessage> {
 
 #[allow(clippy::too_many_lines)]
 fn print_help_to(out: &mut impl Write) -> io::Result<()> {
-    writeln!(out, "claw v{VERSION}")?;
+    writeln!(out, "rouratui v{VERSION}")?;
     writeln!(out)?;
     writeln!(out, "Usage:")?;
     writeln!(
         out,
-        "  claw [--model MODEL] [--allowedTools TOOL[,TOOL...]]"
+        "  rouratui [--model MODEL] [--allowedTools TOOL[,TOOL...]]"
     )?;
     writeln!(out, "      Start the interactive REPL")?;
     writeln!(
         out,
-        "  claw [--model MODEL] [--output-format text|json] prompt [--stdin] [TEXT]"
+        "  rouratui [--model MODEL] [--output-format text|json] prompt [--stdin] [TEXT]"
     )?;
     writeln!(
         out,
@@ -14098,7 +14128,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  claw [--model MODEL] [--output-format text|json] TEXT"
+        "  rouratui [--model MODEL] [--output-format text|json] TEXT"
     )?;
     writeln!(out, "      Shorthand non-interactive prompt mode")?;
     writeln!(
@@ -14107,29 +14137,34 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
     )?;
     writeln!(
         out,
-        "  claw --resume [SESSION.jsonl|session-id|latest] [/status] [/compact] [...]"
+        "  rouratui --resume [SESSION.jsonl|session-id|latest] [/status] [/compact] [...]"
     )?;
     writeln!(
         out,
         "      Inspect or maintain a saved session without entering the REPL"
     )?;
-    writeln!(out, "  claw help")?;
+    writeln!(out, "  rouratui help")?;
     writeln!(out, "      Alias for --help")?;
-    writeln!(out, "  claw version")?;
+    writeln!(out, "  rouratui version")?;
     writeln!(out, "      Alias for --version")?;
-    writeln!(out, "  claw status")?;
+    writeln!(out, "  rouratui update [--check]")?;
+    writeln!(
+        out,
+        "      Check GitHub and securely install the latest release"
+    )?;
+    writeln!(out, "  rouratui status")?;
     writeln!(
         out,
         "      Show the current local workspace status snapshot"
     )?;
-    writeln!(out, "  claw sandbox")?;
+    writeln!(out, "  rouratui sandbox")?;
     writeln!(out, "      Show the current sandbox isolation snapshot")?;
-    writeln!(out, "  claw doctor")?;
+    writeln!(out, "  rouratui doctor")?;
     writeln!(
         out,
         "      Diagnose local auth, config, workspace, and sandbox health"
     )?;
-    writeln!(out, "  claw acp [serve]")?;
+    writeln!(out, "  rouratui acp [serve]")?;
     writeln!(
         out,
         "      Show ACP/Zed editor integration status (currently unsupported; aliases: --acp, -acp)"
@@ -14139,16 +14174,19 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         out,
         "      Warning: do not `{DEPRECATED_INSTALL_COMMAND}` (deprecated stub)"
     )?;
-    writeln!(out, "  claw dump-manifests [--manifests-dir PATH]")?;
-    writeln!(out, "  claw bootstrap-plan")?;
-    writeln!(out, "  claw agents")?;
-    writeln!(out, "  claw mcp")?;
-    writeln!(out, "  claw skills")?;
-    writeln!(out, "  claw system-prompt [--cwd PATH] [--date YYYY-MM-DD]")?;
-    writeln!(out, "  claw init")?;
+    writeln!(out, "  rouratui dump-manifests [--manifests-dir PATH]")?;
+    writeln!(out, "  rouratui bootstrap-plan")?;
+    writeln!(out, "  rouratui agents")?;
+    writeln!(out, "  rouratui mcp")?;
+    writeln!(out, "  rouratui skills")?;
     writeln!(
         out,
-        "  claw export [PATH] [--session SESSION] [--output PATH]"
+        "  rouratui system-prompt [--cwd PATH] [--date YYYY-MM-DD]"
+    )?;
+    writeln!(out, "  rouratui init")?;
+    writeln!(
+        out,
+        "  rouratui export [PATH] [--session SESSION] [--output PATH]"
     )?;
     writeln!(
         out,
@@ -14226,33 +14264,36 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "  Use /session list in the REPL to browse managed sessions"
     )?;
     writeln!(out, "Examples:")?;
-    writeln!(out, "  claw --model claude-opus \"summarize this repo\"")?;
     writeln!(
         out,
-        "  claw --output-format json prompt \"explain src/main.rs\""
+        "  rouratui --model claude-opus \"summarize this repo\""
     )?;
-    writeln!(out, "  claw --compact \"summarize Cargo.toml\" | wc -l")?;
     writeln!(
         out,
-        "  claw --allowedTools read,glob \"summarize Cargo.toml\""
+        "  rouratui --output-format json prompt \"explain src/main.rs\""
     )?;
-    writeln!(out, "  claw --resume {LATEST_SESSION_REFERENCE}")?;
+    writeln!(out, "  rouratui --compact \"summarize Cargo.toml\" | wc -l")?;
     writeln!(
         out,
-        "  claw --resume {LATEST_SESSION_REFERENCE} /status /diff /export notes.txt"
+        "  rouratui --allowedTools read,glob \"summarize Cargo.toml\""
     )?;
-    writeln!(out, "  claw agents")?;
-    writeln!(out, "  claw mcp show my-server")?;
-    writeln!(out, "  claw /skills")?;
-    writeln!(out, "  claw doctor")?;
+    writeln!(out, "  rouratui --resume {LATEST_SESSION_REFERENCE}")?;
+    writeln!(
+        out,
+        "  rouratui --resume {LATEST_SESSION_REFERENCE} /status /diff /export notes.txt"
+    )?;
+    writeln!(out, "  rouratui agents")?;
+    writeln!(out, "  rouratui mcp show my-server")?;
+    writeln!(out, "  rouratui /skills")?;
+    writeln!(out, "  rouratui doctor")?;
     writeln!(out, "  source of truth: {OFFICIAL_REPO_URL}")?;
     writeln!(
         out,
         "  do not run `{DEPRECATED_INSTALL_COMMAND}` — it installs a deprecated stub"
     )?;
-    writeln!(out, "  claw init")?;
-    writeln!(out, "  claw export")?;
-    writeln!(out, "  claw export conversation.md")?;
+    writeln!(out, "  rouratui init")?;
+    writeln!(out, "  rouratui export")?;
+    writeln!(out, "  rouratui export conversation.md")?;
     Ok(())
 }
 
@@ -14441,7 +14482,7 @@ mod tests {
         );
         assert!(rendered.contains("Compact          /compact"), "{rendered}");
         assert!(
-            rendered.contains("Resume compact   claw --resume session-issue-32 /compact"),
+            rendered.contains("Resume compact   rouratui --resume session-issue-32 /compact"),
             "{rendered}"
         );
         assert!(
@@ -14552,7 +14593,7 @@ mod tests {
         );
         assert!(rendered.contains("Compact          /compact"), "{rendered}");
         assert!(
-            rendered.contains("Resume compact   claw --resume session-issue-32 /compact"),
+            rendered.contains("Resume compact   rouratui --resume session-issue-32 /compact"),
             "{rendered}"
         );
     }
@@ -14566,7 +14607,7 @@ mod tests {
             .expect("time should be after epoch")
             .as_nanos();
         let unique = COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("rusty-claude-cli-{nanos}-{unique}"))
+        std::env::temp_dir().join(format!("rouratui-cli-{nanos}-{unique}"))
     }
 
     fn git(args: &[&str], cwd: &Path) {
@@ -15809,7 +15850,7 @@ mod tests {
         assert_eq!(value["command"], "export");
         assert_eq!(
             value["usage"],
-            "claw export [--session <id|latest>] [--output <path>] [--output-format <format>]"
+            "rouratui export [--session <id|latest>] [--output <path>] [--output-format <format>]"
         );
         assert_eq!(value["defaults"]["session"], LATEST_SESSION_REFERENCE);
         assert!(value["options"].as_array().expect("options array").len() >= 4);
@@ -15876,9 +15917,9 @@ mod tests {
 
     #[test]
     fn status_degrades_gracefully_on_malformed_mcp_config_143() {
-        // #143: previously `claw status` hard-failed on any config parse error,
+        // #143: previously `rouratui status` hard-failed on any config parse error,
         // taking down the entire health surface for one malformed MCP entry.
-        // `claw doctor` already degrades gracefully; this test locks `status`
+        // `rouratui doctor` already degrades gracefully; this test locks `status`
         // to the same contract.
         let _guard = env_lock();
         let root = temp_dir();
@@ -16082,15 +16123,15 @@ mod tests {
         );
         // New actionable hints — this is what #139 is fixing.
         assert!(
-            message.contains("claw prompt"),
-            "error should name `claw prompt <text>` as a producer: {message}"
+            message.contains("rouratui prompt"),
+            "error should name `rouratui prompt <text>` as a producer: {message}"
         );
         assert!(
             message.contains("REPL"),
             "error should mention the interactive REPL as a producer: {message}"
         );
         assert!(
-            message.contains("claw state"),
+            message.contains("rouratui state"),
             "error should tell the user what to rerun once state exists: {message}"
         );
         // And the State --help topic must document the worker relationship
@@ -16101,8 +16142,8 @@ mod tests {
             "state help must document how state is produced: {state_help}"
         );
         assert!(
-            state_help.contains("claw prompt"),
-            "state help must name `claw prompt <text>` as a producer: {state_help}"
+            state_help.contains("rouratui prompt"),
+            "state help must name `rouratui prompt <text>` as a producer: {state_help}"
         );
     }
 
@@ -16268,7 +16309,7 @@ mod tests {
             "command_not_found" // #825: unified from unknown_subcommand
         );
         assert_eq!(
-            classify_error_kind("unsupported ACP invocation. Use `claw acp`."),
+            classify_error_kind("unsupported ACP invocation. Use `rouratui acp`."),
             "unsupported_acp_invocation"
         );
         assert_eq!(
@@ -16418,7 +16459,7 @@ mod tests {
         );
         assert_eq!(
             classify_error_kind(
-                "missing_prompt: -p requires a prompt string.\nUsage: claw -p <text>"
+                "missing_prompt: -p requires a prompt string.\nUsage: rouratui -p <text>"
             ),
             "missing_prompt"
         );
@@ -16435,27 +16476,27 @@ mod tests {
         // #765: removed auth subcommands must classify as removed_subcommand
         assert_eq!(
             classify_error_kind(
-                "`claw login` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
+                "`rouratui login` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
             ),
             "removed_subcommand"
         );
         // #766: unexpected extra arguments must classify as unexpected_extra_args
         assert_eq!(
             classify_error_kind(
-                "unexpected extra arguments after `claw diff`: --bogus\nUsage: claw diff"
+                "unexpected extra arguments after `rouratui diff`: --bogus\nUsage: rouratui diff"
             ),
             "unexpected_extra_args"
         );
         assert_eq!(
             classify_error_kind(
-                "`claw logout` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
+                "`rouratui logout` has been removed.\nSet ANTHROPIC_API_KEY or ANTHROPIC_AUTH_TOKEN instead."
             ),
             "removed_subcommand"
         );
         // #768: invalid resume trailing arg must classify as invalid_resume_argument
         assert_eq!(
             classify_error_kind(
-                "invalid_resume_argument: `compact` is not a slash command.\nUsage: claw --resume <session-id|latest> /<slash-command>"
+                "invalid_resume_argument: `compact` is not a slash command.\nUsage: rouratui --resume <session-id|latest> /<slash-command>"
             ),
             "invalid_resume_argument"
         );
@@ -17185,7 +17226,7 @@ mod tests {
         let error = parse_args(&["--resum".to_string()]).expect_err("unknown option should fail");
         assert!(error.contains("unknown option: --resum"));
         assert!(error.contains("Did you mean --resume?"));
-        assert!(error.contains("claw --help"));
+        assert!(error.contains("rouratui --help"));
     }
 
     #[test]
@@ -17556,20 +17597,20 @@ mod tests {
         let mut help = Vec::new();
         print_help_to(&mut help).expect("help should render");
         let help = String::from_utf8(help).expect("help should be utf8");
-        assert!(help.contains("claw help"));
-        assert!(help.contains("claw version"));
-        assert!(help.contains("claw status"));
-        assert!(help.contains("claw sandbox"));
-        assert!(help.contains("claw init"));
-        assert!(help.contains("claw acp [serve]"));
-        assert!(help.contains("claw agents"));
-        assert!(help.contains("claw mcp"));
-        assert!(help.contains("claw skills"));
-        assert!(help.contains("claw /skills"));
+        assert!(help.contains("rouratui help"));
+        assert!(help.contains("rouratui version"));
+        assert!(help.contains("rouratui status"));
+        assert!(help.contains("rouratui sandbox"));
+        assert!(help.contains("rouratui init"));
+        assert!(help.contains("rouratui acp [serve]"));
+        assert!(help.contains("rouratui agents"));
+        assert!(help.contains("rouratui mcp"));
+        assert!(help.contains("rouratui skills"));
+        assert!(help.contains("rouratui /skills"));
         assert!(help.contains("ultraworkers/claw-code"));
         assert!(help.contains("cargo install claw-code"));
-        assert!(!help.contains("claw login"));
-        assert!(!help.contains("claw logout"));
+        assert!(!help.contains("rouratui login"));
+        assert!(!help.contains("rouratui logout"));
     }
 
     #[test]
@@ -17731,7 +17772,7 @@ mod tests {
                 },
                 TmuxPaneSnapshot {
                     pane_id: "%2".to_string(),
-                    current_command: "claw".to_string(),
+                    current_command: "rouratui".to_string(),
                     current_path: workspace.join("rust"),
                 },
             ],
@@ -17739,7 +17780,7 @@ mod tests {
 
         assert_eq!(lifecycle.kind, SessionLifecycleKind::RunningProcess);
         assert_eq!(lifecycle.pane_id.as_deref(), Some("%2"));
-        assert_eq!(lifecycle.pane_command.as_deref(), Some("claw"));
+        assert_eq!(lifecycle.pane_command.as_deref(), Some("rouratui"));
         assert!(!lifecycle.abandoned);
     }
 
@@ -17925,7 +17966,7 @@ mod tests {
             session_lifecycle: SessionLifecycleSummary {
                 kind: SessionLifecycleKind::RunningProcess,
                 pane_id: Some("%9".to_string()),
-                pane_command: Some("claw".to_string()),
+                pane_command: Some("rouratui".to_string()),
                 pane_path: Some(PathBuf::from("/tmp/project")),
                 workspace_dirty: false,
                 abandoned: false,
@@ -17965,7 +18006,7 @@ mod tests {
         );
         assert_eq!(
             value["workspace"]["session_lifecycle"]["pane_command"],
-            "claw"
+            "rouratui"
         );
         assert_eq!(value["workspace"]["session_lifecycle"]["abandoned"], false);
         assert_eq!(value["workspace"]["branch_freshness"]["fresh"], true);
@@ -18344,10 +18385,10 @@ UU conflicted.rs",
         let mut help = Vec::new();
         print_help_to(&mut help).expect("help should render");
         let help = String::from_utf8(help).expect("help should be utf8");
-        assert!(help.contains("claw --resume [SESSION.jsonl|session-id|latest]"));
+        assert!(help.contains("rouratui --resume [SESSION.jsonl|session-id|latest]"));
         assert!(help.contains("Use `latest` with --resume, /resume, or /session switch"));
-        assert!(help.contains("claw --resume latest"));
-        assert!(help.contains("claw --resume latest /status /diff /export notes.txt"));
+        assert!(help.contains("rouratui --resume latest"));
+        assert!(help.contains("rouratui --resume latest /status /diff /export notes.txt"));
     }
 
     #[test]
@@ -18940,7 +18981,7 @@ UU conflicted.rs",
             task_label: "ship plugin progress".to_string(),
             step: 3,
             phase: "running read_file".to_string(),
-            detail: Some("reading rust/crates/rusty-claude-cli/src/main.rs".to_string()),
+            detail: Some("reading rust/crates/rouratui-cli/src/main.rs".to_string()),
             saw_final_text: false,
         };
 
@@ -18987,8 +19028,8 @@ UU conflicted.rs",
             "reading src/main.rs"
         );
         assert!(
-            describe_tool_progress("bash", r#"{"command":"cargo test -p rusty-claude-cli"}"#)
-                .contains("cargo test -p rusty-claude-cli")
+            describe_tool_progress("bash", r#"{"command":"cargo test -p rouratui-cli"}"#)
+                .contains("cargo test -p rouratui-cli")
         );
         assert_eq!(
             describe_tool_progress("grep_search", r#"{"pattern":"ultraplan","path":"rust"}"#),

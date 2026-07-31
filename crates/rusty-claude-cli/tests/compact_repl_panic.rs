@@ -55,7 +55,7 @@ fn run_claw_repl(
     home: &std::path::Path,
     stdin: &str,
 ) -> Output {
-    let mut command = python_pty_command(env!("CARGO_BIN_EXE_claw"));
+    let mut command = python_pty_command(env!("CARGO_BIN_EXE_rouratui"));
     let mut child = command
         .current_dir(cwd)
         .env_clear()
@@ -68,7 +68,7 @@ fn run_claw_repl(
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .spawn()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     child
         .stdin
@@ -77,10 +77,10 @@ fn run_claw_repl(
         .write_all(stdin.as_bytes())
         .expect("stdin should write");
 
-    child.wait_with_output().expect("claw should finish")
+    child.wait_with_output().expect("rouratui should finish")
 }
 
-fn python_pty_command(claw: &str) -> Command {
+fn python_pty_command(rouratui: &str) -> Command {
     let mut command = Command::new("python3");
     command.args([
         "-c",
@@ -90,10 +90,10 @@ import pty
 import subprocess
 import sys
 
-claw = sys.argv[1]
+rouratui = sys.argv[1]
 payload = sys.stdin.buffer.read()
 master, slave = pty.openpty()
-child = subprocess.Popen([claw], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+child = subprocess.Popen([rouratui], stdin=slave, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 os.close(slave)
 os.write(master, payload)
 stdout, stderr = child.communicate(timeout=30)
@@ -102,7 +102,7 @@ sys.stdout.buffer.write(stdout)
 sys.stderr.buffer.write(stderr)
 raise SystemExit(child.returncode)
 "#,
-        claw,
+        rouratui,
     ]);
     command
 }

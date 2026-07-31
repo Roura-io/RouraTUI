@@ -30,7 +30,7 @@ fn compact_flag_prints_only_final_assistant_text_without_tool_call_details() {
     fs::create_dir_all(&home).expect("home should exist");
     fs::write(workspace.join("fixture.txt"), "alpha parity line\n").expect("fixture should write");
 
-    // when we run claw in compact text mode against a tool-using scenario
+    // when we run rouratui in compact text mode against a tool-using scenario
     let prompt = format!("{SCENARIO_PREFIX}read_file_roundtrip");
     let output = run_claw(
         &workspace,
@@ -96,7 +96,7 @@ fn compact_flag_streaming_text_only_emits_final_message_text() {
     fs::create_dir_all(&config_home).expect("config home should exist");
     fs::create_dir_all(&home).expect("home should exist");
 
-    // when we invoke claw with --compact for the streaming text scenario
+    // when we invoke rouratui with --compact for the streaming text scenario
     let prompt = format!("{SCENARIO_PREFIX}streaming_text");
     let output = run_claw(
         &workspace,
@@ -146,7 +146,7 @@ fn text_prompt_mode_prints_final_assistant_text_after_spinner() {
     fs::create_dir_all(&config_home).expect("config home should exist");
     fs::create_dir_all(&home).expect("home should exist");
 
-    // when we invoke claw in normal text prompt mode for the streaming text scenario
+    // when we invoke rouratui in normal text prompt mode for the streaming text scenario
     let prompt = format!("{SCENARIO_PREFIX}streaming_text");
     let output = run_claw(
         &workspace,
@@ -396,7 +396,7 @@ fn compact_subcommand_json_fails_fast_when_stdin_closed() {
         parsed["message"]
             .as_str()
             .unwrap_or_default()
-            .contains("claw compact"),
+            .contains("rouratui compact"),
         "message should name compact: {parsed}"
     );
     // #749: hint must be non-empty (was null before fix — same class as #738/#745/#746)
@@ -444,7 +444,7 @@ fn compact_subcommand_text_fails_fast_when_stdin_closed() {
         stderr.contains("[error-kind: interactive_only]"),
         "{stderr}"
     );
-    assert!(stderr.contains("claw compact"), "{stderr}");
+    assert!(stderr.contains("rouratui compact"), "{stderr}");
 
     fs::remove_dir_all(&workspace).expect("workspace cleanup should succeed");
 }
@@ -456,7 +456,7 @@ fn run_claw(
     base_url: &str,
     args: &[&str],
 ) -> Output {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_claw"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rouratui"));
     command
         .current_dir(cwd)
         .env_clear()
@@ -467,7 +467,7 @@ fn run_claw(
         .env("NO_COLOR", "1")
         .env("PATH", "/usr/bin:/bin")
         .args(args);
-    command.output().expect("claw should launch")
+    command.output().expect("rouratui should launch")
 }
 
 fn run_claw_with_stdin(
@@ -478,7 +478,7 @@ fn run_claw_with_stdin(
     args: &[&str],
     stdin: &str,
 ) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(cwd)
         .env_clear()
         .env("ANTHROPIC_API_KEY", "test-compact-key")
@@ -492,7 +492,7 @@ fn run_claw_with_stdin(
         .stderr(Stdio::piped())
         .args(args)
         .spawn()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
     child
         .stdin
         .as_mut()
@@ -510,7 +510,7 @@ fn run_claw_closed_stdin_with_timeout(
     args: &[&str],
     timeout: Duration,
 ) -> Output {
-    let mut child = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(cwd)
         .env_clear()
         .env("CLAW_CONFIG_HOME", config_home)
@@ -522,7 +522,7 @@ fn run_claw_closed_stdin_with_timeout(
         .stderr(Stdio::piped())
         .args(args)
         .spawn()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     let start = Instant::now();
     loop {
@@ -535,7 +535,7 @@ fn run_claw_closed_stdin_with_timeout(
                 .wait_with_output()
                 .expect("killed output should collect");
             panic!(
-                "claw did not exit within {:?}\nstdout:\n{}\nstderr:\n{}",
+                "rouratui did not exit within {:?}\nstdout:\n{}\nstderr:\n{}",
                 timeout,
                 String::from_utf8_lossy(&output.stdout),
                 String::from_utf8_lossy(&output.stderr)

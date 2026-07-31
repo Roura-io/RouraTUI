@@ -15,7 +15,7 @@ fn status_command_applies_model_and_permission_mode_flags() {
     fs::create_dir_all(&temp_dir).expect("temp dir should exist");
 
     // when
-    let output = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(&temp_dir)
         .args([
             "--model",
@@ -25,7 +25,7 @@ fn status_command_applies_model_and_permission_mode_flags() {
             "status",
         ])
         .output()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     // then
     assert_success(&output);
@@ -45,7 +45,7 @@ fn resume_flag_loads_a_saved_session_and_dispatches_status() {
     let session_path = write_session(&temp_dir, "resume-status");
 
     // when
-    let output = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(&temp_dir)
         .args([
             "--resume",
@@ -53,7 +53,7 @@ fn resume_flag_loads_a_saved_session_and_dispatches_status() {
             "/status",
         ])
         .output()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     // then
     assert_success(&output);
@@ -73,16 +73,16 @@ fn slash_command_names_match_known_commands_and_suggest_nearby_unknown_ones() {
     fs::create_dir_all(&temp_dir).expect("temp dir should exist");
 
     // when
-    let help_output = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let help_output = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(&temp_dir)
         .arg("/help")
         .output()
-        .expect("claw should launch");
-    let unknown_output = Command::new(env!("CARGO_BIN_EXE_claw"))
+        .expect("rouratui should launch");
+    let unknown_output = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(&temp_dir)
         .arg("/zstats")
         .output()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     // then
     assert_success(&help_output);
@@ -109,11 +109,11 @@ fn omc_namespaced_slash_commands_surface_a_targeted_compatibility_hint() {
     let temp_dir = unique_temp_dir("slash-dispatch-omc");
     fs::create_dir_all(&temp_dir).expect("temp dir should exist");
 
-    let output = Command::new(env!("CARGO_BIN_EXE_claw"))
+    let output = Command::new(env!("CARGO_BIN_EXE_rouratui"))
         .current_dir(&temp_dir)
         .arg("/oh-my-claudecode:hud")
         .output()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     assert!(
         !output.status.success(),
@@ -158,7 +158,7 @@ fn config_command_loads_defaults_from_standard_config_locations() {
             "model",
         ])
         .output()
-        .expect("claw should launch");
+        .expect("rouratui should launch");
 
     // then
     assert_success(&output);
@@ -200,7 +200,7 @@ fn doctor_command_runs_as_a_local_shell_entrypoint() {
         .env("ANTHROPIC_BASE_URL", "http://127.0.0.1:9")
         .arg("doctor")
         .output()
-        .expect("claw doctor should launch");
+        .expect("rouratui doctor should launch");
 
     // then
     assert_success(&output);
@@ -231,13 +231,13 @@ fn local_smoke_commands_do_not_require_live_credentials() {
         let output = offline_command_in(&temp_dir, &config_home)
             .args(args)
             .output()
-            .unwrap_or_else(|error| panic!("claw {args:?} should launch: {error}"));
+            .unwrap_or_else(|error| panic!("rouratui {args:?} should launch: {error}"));
 
         assert_success(&output);
         let stdout = String::from_utf8(output.stdout).expect("stdout should be utf8");
         let stderr = String::from_utf8(output.stderr).expect("stderr should be utf8");
         assert!(
-            stdout.contains("claw")
+            stdout.contains("rouratui")
                 || stdout.contains("Status")
                 || stdout.contains("Config")
                 || stdout.contains("Doctor"),
@@ -282,13 +282,13 @@ fn local_subcommand_help_does_not_fall_through_to_runtime_or_provider_calls() {
 
     assert_success(&doctor_help);
     let doctor_stdout = String::from_utf8(doctor_help.stdout).expect("stdout should be utf8");
-    assert!(doctor_stdout.contains("Usage            claw doctor"));
+    assert!(doctor_stdout.contains("Usage            rouratui doctor"));
     assert!(doctor_stdout.contains("local-only health report"));
     assert!(!doctor_stdout.contains("Thinking"));
 
     assert_success(&status_help);
     let status_stdout = String::from_utf8(status_help.stdout).expect("stdout should be utf8");
-    assert!(status_stdout.contains("Usage            claw status"));
+    assert!(status_stdout.contains("Usage            rouratui status"));
     assert!(status_stdout.contains("local workspace snapshot"));
     assert!(!status_stdout.contains("Thinking"));
 
@@ -314,7 +314,7 @@ fn offline_command_in(cwd: &Path, config_home: &Path) -> Command {
 }
 
 fn command_in(cwd: &Path) -> Command {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_claw"));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_rouratui"));
     command.current_dir(cwd);
     command
 }
