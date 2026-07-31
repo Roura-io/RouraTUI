@@ -1,0 +1,12 @@
+#!/bin/sh
+set -eu
+
+# rouraTUI is local-first. Callers can override either value explicitly, but
+# the installed launcher never falls back to a cloud provider by default.
+: "${OLLAMA_HOST:=http://10.0.10.3:11434}"
+: "${CLAW_MODEL:=qwen3.6:27b-coding-bf16}"
+export OLLAMA_HOST CLAW_MODEL
+
+bin_dir=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+prefix=$(dirname -- "$bin_dir")
+exec "$prefix/libexec/rouratui/rouratui-bin" "$@"

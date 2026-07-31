@@ -1,4 +1,4 @@
-# rouraTUI v2.0.0-alpha.1
+# rouraTUI v2.0.0-alpha.2
 
 This is the first runnable Rust migration release.
 
@@ -10,6 +10,8 @@ This is the first runnable Rust migration release.
 - MCP, plugins, skills, sessions, compaction, sub-agents, and structured CLI
   output from the imported Rust kernel.
 - Native Apple silicon release binary installed as `rouratui`.
+- Local-only launcher targeting Ollama at `10.0.10.3:11434` with
+  `qwen3.6:27b-coding-bf16`; no cloud credentials are required.
 - Preserved Go v1.2.1 history on `legacy/go-v1.2.1`.
 
 ## Alpha limitations

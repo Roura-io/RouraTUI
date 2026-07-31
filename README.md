@@ -8,6 +8,10 @@ The stable Go implementation and its release history are preserved on the
 `legacy/go-v1.2.1` branch. Rust alpha releases install as `rouratui`; the
 historical `claw` command remains available as a temporary compatibility alias.
 
+The installed launcher defaults to the local Ollama server at
+`http://10.0.10.3:11434` with `qwen3.6:27b-coding-bf16`. Set `OLLAMA_HOST` or
+`CLAW_MODEL` explicitly to override either value.
+
 A high-performance Rust rewrite of the Claw Code CLI agent harness. Built for speed, safety, and native tool execution.
 
 For a task-oriented guide with copy/paste examples, see [`../USAGE.md`](../USAGE.md).
