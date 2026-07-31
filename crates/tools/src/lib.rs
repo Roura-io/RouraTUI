@@ -2544,7 +2544,7 @@ fn run_delegate(mut input: AgentInput) -> Result<String, String> {
         ));
     }
     input.subagent_type = Some(specialist);
-    let manifest = execute_agent_with_spawn(input, |job| run_agent_job(&job))?;
+    let manifest = execute_agent_with_spawn_mode(input, |job| run_agent_job(&job), true)?;
     let transcript =
         std::fs::read_to_string(&manifest.output_file).map_err(|error| error.to_string())?;
     to_pretty_json(json!({
@@ -4137,6 +4137,17 @@ fn execute_agent_with_spawn<F>(input: AgentInput, spawn_fn: F) -> Result<AgentOu
 where
     F: FnOnce(AgentJob) -> Result<(), String>,
 {
+    execute_agent_with_spawn_mode(input, spawn_fn, false)
+}
+
+fn execute_agent_with_spawn_mode<F>(
+    input: AgentInput,
+    spawn_fn: F,
+    analysis_only: bool,
+) -> Result<AgentOutput, String>
+where
+    F: FnOnce(AgentJob) -> Result<(), String>,
+{
     if input.description.trim().is_empty() {
         return Err(String::from("description must not be empty"));
     }
@@ -4159,7 +4170,10 @@ where
         .unwrap_or_else(|| slugify_agent_name(&input.description));
     let created_at = iso8601_now();
     let system_prompt = build_agent_system_prompt(&normalized_subagent_type, &model)?;
-    let allowed_tools = allowed_tools_for_subagent(&normalized_subagent_type);
+    let mut allowed_tools = allowed_tools_for_subagent(&normalized_subagent_type);
+    if analysis_only {
+        retain_analysis_only_tools(&mut allowed_tools);
+    }
 
     let output_contents = format!(
         "# Agent Task
@@ -4211,6 +4225,24 @@ where
     }
 
     Ok(manifest)
+}
+
+fn retain_analysis_only_tools(tools: &mut BTreeSet<String>) {
+    tools.retain(|tool| {
+        matches!(
+            tool.as_str(),
+            "read_file"
+                | "glob_search"
+                | "grep_search"
+                | "web_fetch"
+                | "web_search"
+                | "tool_search"
+                | "skill"
+                | "todo_write"
+                | "structured_output"
+                | "send_user_message"
+        )
+    });
 }
 
 fn spawn_agent_job(job: AgentJob) -> Result<(), String> {
@@ -6891,9 +6923,9 @@ mod tests {
         classify_lane_failure, derive_agent_state, execute_agent_with_spawn, execute_tool,
         extract_recovery_outcome, final_assistant_text, global_cron_registry,
         maybe_commit_provenance, mvp_tool_specs, permission_mode_from_plugin,
-        persist_agent_terminal_state, push_output_block, run_task_packet, AgentInput, AgentJob,
-        GlobalToolRegistry, LaneEventName, LaneFailureClass, ProviderRuntimeClient,
-        SubagentToolExecutor,
+        persist_agent_terminal_state, push_output_block, retain_analysis_only_tools,
+        run_task_packet, AgentInput, AgentJob, GlobalToolRegistry, LaneEventName, LaneFailureClass,
+        ProviderRuntimeClient, SubagentToolExecutor,
     };
     use api::OutputContentBlock;
     use runtime::ProviderFallbackConfig;
@@ -9413,6 +9445,14 @@ mod tests {
             delegate.input_schema["properties"]["subagent_type"]["enum"],
             json!(["Explore", "Plan", "Verification"])
         );
+
+        let mut tools = allowed_tools_for_subagent("Verification");
+        retain_analysis_only_tools(&mut tools);
+        assert!(tools.contains("read_file"));
+        assert!(tools.contains("grep_search"));
+        assert!(!tools.contains("bash"));
+        assert!(!tools.contains("power_shell"));
+        assert!(!tools.contains("write_file"));
     }
 
     #[test]
