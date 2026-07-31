@@ -1,8 +1,11 @@
-# rouraTUI v2.0.0-alpha.4
+# rouraTUI v2.0.0-alpha.5
 
 This release restores the rouraTUI product identity on the imported Rust
 runtime, adds the compact conversation view and coral multiline composer, and
 introduces verified self-updates with `rouratui update`.
+
+Alpha.5 points the updater and product metadata at the canonical
+`Roura-io/RouraTUI` GitHub repository.
 
 ## New in alpha.4
 

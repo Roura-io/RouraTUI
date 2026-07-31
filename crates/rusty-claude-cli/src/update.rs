@@ -7,7 +7,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::Deserialize;
 use serde_json::json;
 
-const REPOSITORY: &str = "elGordoRoura/rouratui";
+const REPOSITORY: &str = "Roura-io/RouraTUI";
 const ASSET: &str = "rouratui-darwin-arm64.tar.gz";
 const CHECKSUM_ASSET: &str = "rouratui-darwin-arm64.tar.gz.sha256";
 
