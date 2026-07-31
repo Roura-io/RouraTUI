@@ -1,4 +1,16 @@
-# rouraTUI v2.0.0-alpha.5
+# rouraTUI v2.0.0-alpha.6
+
+Alpha.6 restores the original unboxed conversation layout and bottom `> `
+composer, identifies the active responding agent by its model name, and fixes
+duplicate final-answer rendering after streamed responses.
+
+## New in alpha.6
+
+- Restored the original bottom text field and streamlined startup layout.
+- Replaced generic Claw response identity with the active agent model name.
+- Removed the duplicate copy of each streamed final response.
+
+## New in alpha.5
 
 This release restores the rouraTUI product identity on the imported Rust
 runtime, adds the compact conversation view and coral multiline composer, and
