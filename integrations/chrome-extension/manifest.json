@@ -1,0 +1,30 @@
+{
+  "manifest_version": 3,
+  "name": "RouraTUI Browser Control",
+  "version": "0.1.0",
+  "description": "Visible, user-auditable Chrome control for RouraTUI.",
+  "permissions": [
+    "activeTab",
+    "debugger",
+    "nativeMessaging",
+    "scripting",
+    "storage",
+    "tabs"
+  ],
+  "host_permissions": ["<all_urls>"],
+  "background": {
+    "service_worker": "service-worker.js",
+    "type": "module"
+  },
+  "action": {
+    "default_title": "RouraTUI Browser Control"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content-script.js"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ]
+}
