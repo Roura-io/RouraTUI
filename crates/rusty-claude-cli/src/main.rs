@@ -8033,7 +8033,7 @@ impl LiveCli {
     fn run_turn_captured(
         &mut self,
         input: &str,
-        stream_sender: Sender<String>,
+        stream_sender: Sender<tui::TurnEvent>,
     ) -> Result<String, Box<dyn std::error::Error>> {
         let (mut runtime, hook_abort_monitor) = self.prepare_turn_runtime(false)?;
         runtime
@@ -8041,12 +8041,16 @@ impl LiveCli {
             .as_mut()
             .expect("turn runtime must be available")
             .api_client_mut()
-            .set_stream_sender(stream_sender);
-        let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
+            .set_stream_sender(stream_sender.clone());
+        let mut permission_prompter =
+            CliPermissionPrompter::with_turn_sender(self.permission_mode, stream_sender.clone());
         let result = runtime.run_turn(input, Some(&mut permission_prompter));
         hook_abort_monitor.stop();
         match result {
             Ok(summary) => {
+                if !summary.tool_results.is_empty() {
+                    let _ = stream_sender.send(tui::TurnEvent::ToolsFinished);
+                }
                 let final_text = final_assistant_text(&summary);
                 self.replace_runtime(runtime)?;
                 self.persist_session()?;
@@ -12580,11 +12584,22 @@ impl runtime::HookProgressReporter for CliHookProgressReporter {
 
 struct CliPermissionPrompter {
     current_mode: PermissionMode,
+    turn_sender: Option<Sender<tui::TurnEvent>>,
 }
 
 impl CliPermissionPrompter {
     fn new(current_mode: PermissionMode) -> Self {
-        Self { current_mode }
+        Self {
+            current_mode,
+            turn_sender: None,
+        }
+    }
+
+    fn with_turn_sender(current_mode: PermissionMode, turn_sender: Sender<tui::TurnEvent>) -> Self {
+        Self {
+            current_mode,
+            turn_sender: Some(turn_sender),
+        }
     }
 }
 
@@ -12593,6 +12608,30 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
         &mut self,
         request: &runtime::PermissionRequest,
     ) -> runtime::PermissionPromptDecision {
+        if let Some(sender) = &self.turn_sender {
+            let (response_tx, response_rx) = mpsc::sync_channel(1);
+            let event = tui::TurnEvent::ApprovalRequested {
+                tool_name: request.tool_name.clone(),
+                detail: request.input.to_string(),
+                required_mode: request.required_mode.as_str().to_string(),
+                reason: request.reason.clone(),
+                response: response_tx,
+            };
+            if sender.send(event).is_ok() {
+                return match response_rx.recv() {
+                    Ok(true) => runtime::PermissionPromptDecision::Allow,
+                    Ok(false) => runtime::PermissionPromptDecision::Deny {
+                        reason: format!(
+                            "tool '{}' denied by user approval card",
+                            request.tool_name
+                        ),
+                    },
+                    Err(error) => runtime::PermissionPromptDecision::Deny {
+                        reason: format!("approval card closed before a decision: {error}"),
+                    },
+                };
+            }
+        }
         println!();
         println!("Permission approval required");
         println!("  Tool             {}", request.tool_name);
@@ -12644,7 +12683,7 @@ struct AnthropicRuntimeClient {
     tool_registry: GlobalToolRegistry,
     progress_reporter: Option<InternalPromptProgressReporter>,
     reasoning_effort: Option<String>,
-    stream_sender: Option<Sender<String>>,
+    stream_sender: Option<Sender<tui::TurnEvent>>,
 }
 
 impl AnthropicRuntimeClient {
@@ -12718,7 +12757,7 @@ impl AnthropicRuntimeClient {
         self.reasoning_effort = effort;
     }
 
-    fn set_stream_sender(&mut self, sender: Sender<String>) {
+    fn set_stream_sender(&mut self, sender: Sender<tui::TurnEvent>) {
         self.stream_sender = Some(sender);
     }
 }
@@ -12873,7 +12912,7 @@ impl AnthropicRuntimeClient {
                     ContentBlockDelta::TextDelta { text } => {
                         if !text.is_empty() {
                             if let Some(sender) = &self.stream_sender {
-                                let _ = sender.send(text.clone());
+                                let _ = sender.send(tui::TurnEvent::TextDelta(text.clone()));
                             }
                             if let Some(progress_reporter) = &self.progress_reporter {
                                 progress_reporter.mark_text_phase(&text);
@@ -12930,6 +12969,12 @@ impl AnthropicRuntimeClient {
                         writeln!(out, "\n{}", format_tool_call_start(&name, &input))
                             .and_then(|()| out.flush())
                             .map_err(|error| RuntimeError::new(error.to_string()))?;
+                        if let Some(sender) = &self.stream_sender {
+                            let _ = sender.send(tui::TurnEvent::ToolCall {
+                                name: name.clone(),
+                                detail: input.clone(),
+                            });
+                        }
                         events.push(AssistantEvent::ToolUse { id, name, input });
                     }
                 }
