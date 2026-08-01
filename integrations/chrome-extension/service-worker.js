@@ -9,12 +9,15 @@ function activeTab() {
 }
 
 async function targetTab(command) {
-  if (Number.isInteger(command.tabId)) {
-    const tab = await chrome.tabs.get(command.tabId);
-    if (!tab?.id) throw new Error(`Chrome tab ${command.tabId} is unavailable`);
-    return tab;
+  const tab = Number.isInteger(command.tabId)
+    ? await chrome.tabs.get(command.tabId)
+    : await activeTab();
+  if (!tab?.id) throw new Error(`Chrome tab ${command.tabId ?? "active"} is unavailable`);
+  if (command.focus === true) {
+    if (tab.windowId != null) await chrome.windows.update(tab.windowId, { focused: true });
+    await chrome.tabs.update(tab.id, { active: true });
   }
-  return activeTab();
+  return tab;
 }
 
 async function contentCommand(command) {

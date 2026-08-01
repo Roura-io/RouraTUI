@@ -140,3 +140,8 @@ Alpha.5 points the updater and product metadata at the canonical
   operate on a background tab instead of whichever tab happens to be active.
 - Background-tab operations remain auditable and approval-gated; visible cursor
   animation is shown whenever the target tab is active and visible.
+## 2.0.0-alpha.14
+
+- Adds explicit `focus: true` support for browser commands targeting a tab.
+- Background automation remains the default; callers can opt in to focusing
+  the target window/tab when visible cursor feedback is desired.
