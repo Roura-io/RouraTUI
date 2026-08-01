@@ -40,6 +40,7 @@ async function handleCommand(command) {
 }
 
 function connectNativeHost() {
+  if (nativePort) return;
   try {
     nativePort = chrome.runtime.connectNative(NATIVE_HOST);
     nativePort.onMessage.addListener((command) => {
@@ -49,9 +50,12 @@ function connectNativeHost() {
     });
     nativePort.onDisconnect.addListener(() => {
       nativePort = undefined;
+      setTimeout(connectNativeHost, 1000);
     });
   } catch (error) {
     console.debug("RouraTUI native host is not installed yet", error);
+    nativePort = undefined;
+    setTimeout(connectNativeHost, 2000);
   }
 }
 
