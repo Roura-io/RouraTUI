@@ -482,7 +482,7 @@ fn permission_mode_from_plugin(value: &str) -> Result<PermissionMode, String> {
 #[must_use]
 #[allow(clippy::too_many_lines)]
 pub fn mvp_tool_specs() -> Vec<ToolSpec> {
-    vec![
+    let mut specs = vec![
         ToolSpec {
             name: "bash",
             description: "Execute a shell command in the current workspace.",
@@ -1362,6 +1362,72 @@ pub fn mvp_tool_specs() -> Vec<ToolSpec> {
             }),
             required_permission: PermissionMode::ReadOnly,
         },
+    ];
+    if browser_enabled() {
+        specs.extend(browser_tool_specs());
+    }
+    specs
+}
+
+/// Browser control is opt-in because it can affect a real user's active tab.
+/// Set `ROURATUI_ENABLE_BROWSER=1` only after installing the extension and host.
+#[must_use]
+pub fn browser_enabled() -> bool {
+    matches!(
+        std::env::var("ROURATUI_ENABLE_BROWSER").as_deref(),
+        Ok("1" | "true" | "TRUE")
+    )
+}
+
+#[must_use]
+pub fn browser_tool_specs() -> Vec<ToolSpec> {
+    vec![
+        ToolSpec {
+            name: "BrowserStatus",
+            description:
+                "Report the active Chrome tab connected to the visible RouraTUI browser bridge.",
+            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
+            name: "BrowserTabs",
+            description:
+                "List tabs in the active Chrome window through the visible browser bridge.",
+            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
+            name: "BrowserSnapshot",
+            description: "Inspect interactive elements in the active Chrome tab.",
+            input_schema: json!({"type":"object","properties":{},"additionalProperties":false}),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
+            name: "BrowserNavigate",
+            description:
+                "Navigate the active Chrome tab to a URL. This is an external side effect.",
+            input_schema: json!({"type":"object","properties":{"url":{"type":"string","format":"uri"}},"required":["url"],"additionalProperties":false}),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserPoint",
+            description: "Move the visible RouraTUI cursor to an inspected Chrome element.",
+            input_schema: json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}),
+            required_permission: PermissionMode::ReadOnly,
+        },
+        ToolSpec {
+            name: "BrowserClick",
+            description: "Visibly move and click an inspected Chrome element. Requires approval.",
+            input_schema: json!({"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
+        ToolSpec {
+            name: "BrowserType",
+            description:
+                "Visibly focus an inspected Chrome field and enter text. Requires approval.",
+            input_schema: json!({"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}),
+            required_permission: PermissionMode::DangerFullAccess,
+        },
     ]
 }
 
@@ -1516,8 +1582,46 @@ fn execute_tool_with_enforcer(
         "GitLog" => from_value::<GitLogInput>(input).and_then(run_git_log),
         "GitShow" => from_value::<GitShowInput>(input).and_then(run_git_show),
         "GitBlame" => from_value::<GitBlameInput>(input).and_then(run_git_blame),
+        "BrowserStatus" | "BrowserTabs" | "BrowserSnapshot" | "BrowserNavigate"
+        | "BrowserPoint" | "BrowserClick" | "BrowserType" => {
+            run_browser_tool(name, input, enforcer)
+        }
         _ => Err(format!("unsupported tool: {name}")),
     }
+}
+
+fn run_browser_tool(
+    name: &str,
+    input: &Value,
+    enforcer: Option<&PermissionEnforcer>,
+) -> Result<String, String> {
+    if !browser_enabled() {
+        return Err(
+            "browser control is disabled; set ROURATUI_ENABLE_BROWSER=1 to enable it".to_string(),
+        );
+    }
+    let (command_type, required_mode) = match name {
+        "BrowserStatus" => ("status", PermissionMode::ReadOnly),
+        "BrowserTabs" => ("tabs", PermissionMode::ReadOnly),
+        "BrowserSnapshot" => ("snapshot", PermissionMode::ReadOnly),
+        "BrowserNavigate" => ("navigate", PermissionMode::DangerFullAccess),
+        "BrowserPoint" => ("point", PermissionMode::ReadOnly),
+        "BrowserClick" => ("click", PermissionMode::DangerFullAccess),
+        "BrowserType" => ("type", PermissionMode::DangerFullAccess),
+        _ => return Err(format!("unsupported browser tool: {name}")),
+    };
+    maybe_enforce_permission_check_with_mode(enforcer, name, input, required_mode)?;
+    let mut command = input.clone();
+    let object = command
+        .as_object_mut()
+        .ok_or_else(|| "browser tool input must be an object".to_string())?;
+    object.insert("type".to_string(), Value::String(command_type.to_string()));
+    if matches!(command_type, "click" | "type") {
+        object.insert("consequential".to_string(), Value::Bool(true));
+    }
+    browser_bridge::send_command(&command)
+        .map_err(|error| format!("Chrome browser bridge unavailable: {error}"))
+        .and_then(to_pretty_json)
 }
 
 /// Enforce permission check with a dynamically classified permission mode.
@@ -6919,10 +7023,10 @@ mod tests {
     use std::time::Duration;
 
     use super::{
-        agent_permission_policy, allowed_tools_for_subagent, build_agent_system_prompt,
-        classify_lane_failure, derive_agent_state, execute_agent_with_spawn, execute_tool,
-        extract_recovery_outcome, final_assistant_text, global_cron_registry,
-        maybe_commit_provenance, mvp_tool_specs, permission_mode_from_plugin,
+        agent_permission_policy, allowed_tools_for_subagent, browser_tool_specs,
+        build_agent_system_prompt, classify_lane_failure, derive_agent_state,
+        execute_agent_with_spawn, execute_tool, extract_recovery_outcome, final_assistant_text,
+        global_cron_registry, maybe_commit_provenance, mvp_tool_specs, permission_mode_from_plugin,
         persist_agent_terminal_state, push_output_block, retain_analysis_only_tools,
         run_task_packet, AgentInput, AgentJob, GlobalToolRegistry, LaneEventName, LaneFailureClass,
         ProviderRuntimeClient, SubagentToolExecutor,
@@ -7030,6 +7134,17 @@ mod tests {
         assert!(names.contains(&"WorkerObserve"));
         assert!(names.contains(&"WorkerAwaitReady"));
         assert!(names.contains(&"WorkerSendPrompt"));
+    }
+
+    #[test]
+    fn browser_tools_are_not_exposed_by_default() {
+        std::env::remove_var("ROURATUI_ENABLE_BROWSER");
+        assert!(!mvp_tool_specs()
+            .iter()
+            .any(|spec| spec.name == "BrowserStatus"));
+        assert!(browser_tool_specs()
+            .iter()
+            .any(|spec| spec.name == "BrowserClick"));
     }
 
     #[test]
