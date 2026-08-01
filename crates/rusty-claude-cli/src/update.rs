@@ -73,6 +73,28 @@ pub fn run(check_only: bool, json_output: bool) -> Result<(), Box<dyn std::error
     let installed_binary = env::current_exe()?;
     install_binary(&downloaded_binary, &installed_binary)?;
 
+    if temp.join("rouratui-browser-host").is_file() {
+        let browser_root = env::var_os("HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("."))
+            .join(".rouratui");
+        fs::create_dir_all(browser_root.join("bin"))?;
+        install_binary(
+            &temp.join("rouratui-browser-host"),
+            &browser_root.join("bin/rouratui-browser-host"),
+        )?;
+        if temp.join("chrome-extension").is_dir() {
+            copy_tree(
+                &temp.join("chrome-extension"),
+                &browser_root.join("chrome-extension"),
+            )?;
+        }
+        println!(
+            "  Browser host and extension staged under {}",
+            browser_root.display()
+        );
+    }
+
     if json_output {
         println!(
             "{}",
@@ -163,6 +185,21 @@ fn install_binary(source: &Path, destination: &Path) -> Result<(), Box<dyn std::
     }
     fs::set_permissions(&replacement, permissions)?;
     fs::rename(&replacement, destination)?;
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_tree(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
     Ok(())
 }
 

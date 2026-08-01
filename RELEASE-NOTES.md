@@ -1,4 +1,15 @@
-# rouraTUI v2.0.0-alpha.10
+# rouraTUI v2.0.0-alpha.11
+
+Alpha.11 packages the native browser host and extension with releases and
+stages them during `rouratui update`.
+
+## New in alpha.11
+
+- Added the release payload for `rouratui-browser-host` and the Chrome extension.
+- Added `scripts/install-browser-bridge.zsh <extension-id>` to register the
+  native messaging host for Chrome.
+- Added updater staging under `~/.rouratui/bin` and `~/.rouratui/chrome-extension`.
+- Kept browser control disabled until `ROURATUI_ENABLE_BROWSER=1` is set.
 
 Alpha.10 connects the existing visible Chrome bridge to first-class RouraTUI
 browser tools. Browser tools are disabled by default and require
