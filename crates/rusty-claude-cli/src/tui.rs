@@ -36,6 +36,30 @@ enum MessageRole {
     User,
     Agent,
     System,
+    Tool,
+}
+
+pub enum TurnEvent {
+    TextDelta(String),
+    ToolCall {
+        name: String,
+        detail: String,
+    },
+    ToolsFinished,
+    ApprovalRequested {
+        tool_name: String,
+        detail: String,
+        required_mode: String,
+        reason: Option<String>,
+        response: mpsc::SyncSender<bool>,
+    },
+}
+
+struct ApprovalCard {
+    tool_name: String,
+    detail: String,
+    required_mode: String,
+    reason: Option<String>,
 }
 
 pub struct TuiConfig {
@@ -52,6 +76,7 @@ struct App<'a> {
     scroll: u16,
     status: String,
     should_quit: bool,
+    approval: Option<ApprovalCard>,
 }
 
 impl App<'_> {
@@ -74,6 +99,7 @@ impl App<'_> {
             scroll: 0,
             status: "ready".to_string(),
             should_quit: false,
+            approval: None,
         }
     }
 
@@ -136,12 +162,57 @@ impl App<'_> {
     }
 
     fn append_stream_delta(&mut self, delta: &str) {
+        if self.messages.last().map(|message| message.role) != Some(MessageRole::Agent) {
+            self.messages.push(ChatMessage {
+                label: self.config.agent.clone(),
+                text: String::new(),
+                role: MessageRole::Agent,
+            });
+        }
         if let Some(message) = self.messages.last_mut() {
-            if message.role == MessageRole::Agent {
-                message.text.push_str(delta);
-            }
+            message.text.push_str(delta);
         }
         self.scroll = u16::MAX;
+    }
+
+    fn handle_turn_event(&mut self, event: TurnEvent) -> Option<mpsc::SyncSender<bool>> {
+        match event {
+            TurnEvent::TextDelta(delta) => self.append_stream_delta(&delta),
+            TurnEvent::ToolCall { name, detail } => {
+                self.messages.push(ChatMessage {
+                    label: format!("Tool · {name}"),
+                    text: detail,
+                    role: MessageRole::Tool,
+                });
+                self.status = format!("running {name}");
+                self.scroll = u16::MAX;
+            }
+            TurnEvent::ToolsFinished => {
+                for message in &mut self.messages {
+                    if message.role == MessageRole::Tool && !message.label.ends_with(" ✓") {
+                        message.label.push_str(" ✓");
+                    }
+                }
+                self.status = format!("{} is thinking", self.config.agent);
+            }
+            TurnEvent::ApprovalRequested {
+                tool_name,
+                detail,
+                required_mode,
+                reason,
+                response,
+            } => {
+                self.status = format!("approval required · {tool_name}");
+                self.approval = Some(ApprovalCard {
+                    tool_name,
+                    detail,
+                    required_mode,
+                    reason,
+                });
+                return Some(response);
+            }
+        }
+        None
     }
 
     fn transcript(&self) -> Text<'static> {
@@ -151,6 +222,7 @@ impl App<'_> {
                 MessageRole::User => USER,
                 MessageRole::Agent => CORAL,
                 MessageRole::System => FAINT,
+                MessageRole::Tool => Color::Rgb(217, 179, 87),
             };
             lines.push(Line::from(Span::styled(
                 message.label.clone(),
@@ -181,7 +253,7 @@ fn composer_block(busy: bool) -> Block<'static> {
 
 pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
 where
-    F: FnMut(&str, mpsc::Sender<String>) -> Result<String, String>,
+    F: FnMut(&str, mpsc::Sender<TurnEvent>) -> Result<String, String>,
 {
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(config);
@@ -201,17 +273,36 @@ where
             if let Some(input) = app.submit() {
                 terminal.draw(|frame| draw(frame, &mut app))?;
                 let (next_terminal, next_app) = thread::scope(|scope| {
-                    let (delta_tx, delta_rx) = mpsc::channel::<String>();
+                    let (turn_tx, turn_rx) = mpsc::channel::<TurnEvent>();
                     let (result_tx, result_rx) = mpsc::channel::<Result<String, String>>();
                     let renderer = scope.spawn(move || -> io::Result<_> {
                         loop {
                             let mut changed = false;
-                            if let Ok(delta) = delta_rx.recv_timeout(Duration::from_millis(50)) {
-                                app.append_stream_delta(&delta);
-                                changed = true;
-                                while let Ok(delta) = delta_rx.try_recv() {
-                                    app.append_stream_delta(&delta);
+                            if let Ok(event) = turn_rx.recv_timeout(Duration::from_millis(50)) {
+                                if let Some(response) = app.handle_turn_event(event) {
+                                    terminal.draw(|frame| draw(frame, &mut app))?;
+                                    let allowed = read_approval_decision()?;
+                                    let _ = response.send(allowed);
+                                    let tool_name = app.approval.as_ref().map_or_else(
+                                        || "tool".to_string(),
+                                        |approval| approval.tool_name.clone(),
+                                    );
+                                    app.messages.push(ChatMessage {
+                                        label: "Approval".to_string(),
+                                        text: format!(
+                                            "{tool_name} · {}",
+                                            if allowed { "allowed" } else { "denied" }
+                                        ),
+                                        role: MessageRole::System,
+                                    });
+                                    app.approval = None;
+                                    app.status = if allowed {
+                                        format!("running {tool_name}")
+                                    } else {
+                                        format!("{tool_name} denied")
+                                    };
                                 }
+                                changed = true;
                             }
                             if let Ok(result) = result_rx.try_recv() {
                                 app.finish_turn(result);
@@ -223,7 +314,7 @@ where
                             }
                         }
                     });
-                    let result = perform_turn(&input, delta_tx);
+                    let result = perform_turn(&input, turn_tx);
                     let _ = result_tx.send(result);
                     renderer
                         .join()
@@ -243,6 +334,25 @@ where
         }
     }
     Ok(())
+}
+
+fn read_approval_decision() -> io::Result<bool> {
+    loop {
+        if !event::poll(Duration::from_millis(250))? {
+            continue;
+        }
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != event::KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => return Ok(true),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => return Ok(false),
+            _ => {}
+        }
+    }
 }
 
 fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
@@ -279,7 +389,38 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         areas[1],
         &mut scrollbar_state,
     );
-    frame.render_widget(&app.composer, areas[2]);
+    if let Some(approval) = &app.approval {
+        let reason = approval
+            .reason
+            .as_deref()
+            .unwrap_or("No additional reason provided");
+        let card = Paragraph::new(vec![
+            Line::from(vec![
+                Span::styled("Tool  ", Style::default().fg(FAINT)),
+                Span::styled(approval.tool_name.clone(), Style::default().fg(TEXT)),
+                Span::styled(
+                    format!("  · requires {}", approval.required_mode),
+                    Style::default().fg(FAINT),
+                ),
+            ]),
+            Line::from(approval.detail.clone()),
+            Line::from(vec![
+                Span::styled(reason.to_string(), Style::default().fg(FAINT)),
+                Span::styled("    Y/Enter allow · N/Esc deny", Style::default().fg(CORAL)),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CORAL))
+                .title(" Approval required ")
+                .padding(Padding::horizontal(1)),
+        )
+        .wrap(Wrap { trim: true });
+        frame.render_widget(card, areas[2]);
+    } else {
+        frame.render_widget(&app.composer, areas[2]);
+    }
     let footer = Line::from(vec![
         Span::styled(
             format!(" {} ", app.config.agent),
@@ -365,8 +506,9 @@ impl Drop for TerminalSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_quit, is_submit, App, MessageRole, TuiConfig};
+    use super::{is_quit, is_submit, App, MessageRole, TuiConfig, TurnEvent};
     use ratatui_crossterm::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+    use std::sync::mpsc;
 
     #[test]
     fn enter_submits_but_modified_enter_does_not() {
@@ -405,5 +547,47 @@ mod tests {
         assert_eq!(message.role, MessageRole::Agent);
         assert_eq!(message.label, "RIO Agent");
         assert_eq!(message.text, "Hello there");
+    }
+
+    #[test]
+    fn tool_activity_becomes_a_completed_card() {
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+        });
+        app.handle_turn_event(TurnEvent::ToolCall {
+            name: "read_file".to_string(),
+            detail: "README.md".to_string(),
+        });
+        assert_eq!(app.status, "running read_file");
+        app.handle_turn_event(TurnEvent::ToolsFinished);
+        let card = app.messages.last().expect("tool card");
+        assert_eq!(card.role, MessageRole::Tool);
+        assert_eq!(card.label, "Tool · read_file ✓");
+        assert_eq!(card.text, "README.md");
+    }
+
+    #[test]
+    fn approval_event_returns_a_decision_channel() {
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+        });
+        let (response, decision) = mpsc::sync_channel(1);
+        let returned = app.handle_turn_event(TurnEvent::ApprovalRequested {
+            tool_name: "shell".to_string(),
+            detail: "git push".to_string(),
+            required_mode: "danger-full-access".to_string(),
+            reason: Some("network access".to_string()),
+            response,
+        });
+        returned.expect("approval response").send(false).unwrap();
+        assert!(!decision.recv().unwrap());
+        assert!(app.approval.is_some());
+        assert_eq!(app.status, "approval required · shell");
     }
 }
