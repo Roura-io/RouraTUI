@@ -1,4 +1,13 @@
-# rouraTUI v2.0.0-alpha.11
+# rouraTUI v2.0.0-alpha.12
+
+Alpha.12 verifies the real Chrome bridge end to end and makes the extension
+service worker reconnect automatically after native-host startup races.
+
+## New in alpha.12
+
+- Added native-host reconnect handling on disconnect and startup failure.
+- Verified `BrowserStatus` against Chrome and `BrowserSnapshot` against
+  `https://example.com` with a real interactive link.
 
 Alpha.11 packages the native browser host and extension with releases and
 stages them during `rouratui update`.
