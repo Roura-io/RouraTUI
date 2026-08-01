@@ -1,4 +1,6 @@
 use std::io;
+use std::sync::mpsc;
+use std::thread;
 use std::time::Duration;
 
 use ratatui_core::layout::{Constraint, Direction, Layout, Rect};
@@ -89,6 +91,11 @@ impl App<'_> {
             text: input.trim().to_string(),
             role: MessageRole::User,
         });
+        self.messages.push(ChatMessage {
+            label: self.config.agent.clone(),
+            text: String::new(),
+            role: MessageRole::Agent,
+        });
         self.composer = TextArea::default();
         self.composer.set_placeholder_text("Ask RouraTUI anything…");
         self.composer.set_cursor_line_style(Style::default());
@@ -103,19 +110,37 @@ impl App<'_> {
 
     fn finish_turn(&mut self, result: Result<String, String>) {
         match result {
-            Ok(text) => self.messages.push(ChatMessage {
-                label: self.config.agent.clone(),
-                text,
-                role: MessageRole::Agent,
-            }),
-            Err(error) => self.messages.push(ChatMessage {
-                label: "Error".to_string(),
-                text: error,
-                role: MessageRole::System,
-            }),
+            Ok(text) => {
+                if let Some(message) = self.messages.last_mut() {
+                    if message.role == MessageRole::Agent && message.text.is_empty() {
+                        message.text = text;
+                    }
+                }
+            }
+            Err(error) => {
+                if self.messages.last().is_some_and(|message| {
+                    message.role == MessageRole::Agent && message.text.is_empty()
+                }) {
+                    self.messages.pop();
+                }
+                self.messages.push(ChatMessage {
+                    label: "Error".to_string(),
+                    text: error,
+                    role: MessageRole::System,
+                });
+            }
         }
         self.status = "ready".to_string();
         self.composer.set_block(composer_block(false));
+        self.scroll = u16::MAX;
+    }
+
+    fn append_stream_delta(&mut self, delta: &str) {
+        if let Some(message) = self.messages.last_mut() {
+            if message.role == MessageRole::Agent {
+                message.text.push_str(delta);
+            }
+        }
         self.scroll = u16::MAX;
     }
 
@@ -156,7 +181,7 @@ fn composer_block(busy: bool) -> Block<'static> {
 
 pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
 where
-    F: FnMut(&str) -> Result<String, String>,
+    F: FnMut(&str, mpsc::Sender<String>) -> Result<String, String>,
 {
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(config);
@@ -175,8 +200,37 @@ where
         if is_submit(key) {
             if let Some(input) = app.submit() {
                 terminal.draw(|frame| draw(frame, &mut app))?;
-                let result = perform_turn(&input);
-                app.finish_turn(result);
+                let (next_terminal, next_app) = thread::scope(|scope| {
+                    let (delta_tx, delta_rx) = mpsc::channel::<String>();
+                    let (result_tx, result_rx) = mpsc::channel::<Result<String, String>>();
+                    let renderer = scope.spawn(move || -> io::Result<_> {
+                        loop {
+                            let mut changed = false;
+                            if let Ok(delta) = delta_rx.recv_timeout(Duration::from_millis(50)) {
+                                app.append_stream_delta(&delta);
+                                changed = true;
+                                while let Ok(delta) = delta_rx.try_recv() {
+                                    app.append_stream_delta(&delta);
+                                }
+                            }
+                            if let Ok(result) = result_rx.try_recv() {
+                                app.finish_turn(result);
+                                terminal.draw(|frame| draw(frame, &mut app))?;
+                                return Ok((terminal, app));
+                            }
+                            if changed {
+                                terminal.draw(|frame| draw(frame, &mut app))?;
+                            }
+                        }
+                    });
+                    let result = perform_turn(&input, delta_tx);
+                    let _ = result_tx.send(result);
+                    renderer
+                        .join()
+                        .map_err(|_| io::Error::other("stream renderer thread panicked"))?
+                })?;
+                terminal = next_terminal;
+                app = next_app;
             }
         } else if is_quit(key) {
             app.should_quit = true;
@@ -311,7 +365,7 @@ impl Drop for TerminalSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_quit, is_submit};
+    use super::{is_quit, is_submit, App, MessageRole, TuiConfig};
     use ratatui_crossterm::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
     #[test]
@@ -333,5 +387,23 @@ mod tests {
             KeyCode::Char('c'),
             KeyModifiers::CONTROL
         )));
+    }
+
+    #[test]
+    fn streaming_deltas_append_to_agent_label() {
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+        });
+        app.composer.insert_str("hello");
+        assert!(app.submit().is_some());
+        app.append_stream_delta("Hello");
+        app.append_stream_delta(" there");
+        let message = app.messages.last().expect("agent message");
+        assert_eq!(message.role, MessageRole::Agent);
+        assert_eq!(message.label, "RIO Agent");
+        assert_eq!(message.text, "Hello there");
     }
 }

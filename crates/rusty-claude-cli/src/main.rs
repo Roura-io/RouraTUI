@@ -7102,13 +7102,13 @@ fn run_repl(
         permission_mode: cli.permission_mode.as_str().to_string(),
         branch,
     };
-    tui::run(config, |input| {
+    tui::run(config, |input, stream_sender| {
         let trimmed = input.trim();
         cli.record_prompt_history(trimmed);
         let cwd = std::env::current_dir().unwrap_or_default();
         let prompt =
             try_resolve_bare_skill_prompt(&cwd, trimmed).unwrap_or_else(|| trimmed.to_string());
-        cli.run_turn_captured(&prompt)
+        cli.run_turn_captured(&prompt, stream_sender)
             .map_err(|error| error.to_string())
     })?;
     cli.persist_session()?;
@@ -8030,8 +8030,18 @@ impl LiveCli {
         }
     }
 
-    fn run_turn_captured(&mut self, input: &str) -> Result<String, Box<dyn std::error::Error>> {
+    fn run_turn_captured(
+        &mut self,
+        input: &str,
+        stream_sender: Sender<String>,
+    ) -> Result<String, Box<dyn std::error::Error>> {
         let (mut runtime, hook_abort_monitor) = self.prepare_turn_runtime(false)?;
+        runtime
+            .runtime
+            .as_mut()
+            .expect("turn runtime must be available")
+            .api_client_mut()
+            .set_stream_sender(stream_sender);
         let mut permission_prompter = CliPermissionPrompter::new(self.permission_mode);
         let result = runtime.run_turn(input, Some(&mut permission_prompter));
         hook_abort_monitor.stop();
@@ -12634,6 +12644,7 @@ struct AnthropicRuntimeClient {
     tool_registry: GlobalToolRegistry,
     progress_reporter: Option<InternalPromptProgressReporter>,
     reasoning_effort: Option<String>,
+    stream_sender: Option<Sender<String>>,
 }
 
 impl AnthropicRuntimeClient {
@@ -12699,11 +12710,16 @@ impl AnthropicRuntimeClient {
             tool_registry,
             progress_reporter,
             reasoning_effort: None,
+            stream_sender: None,
         })
     }
 
     fn set_reasoning_effort(&mut self, effort: Option<String>) {
         self.reasoning_effort = effort;
+    }
+
+    fn set_stream_sender(&mut self, sender: Sender<String>) {
+        self.stream_sender = Some(sender);
     }
 }
 
@@ -12856,6 +12872,9 @@ impl AnthropicRuntimeClient {
                 ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
                     ContentBlockDelta::TextDelta { text } => {
                         if !text.is_empty() {
+                            if let Some(sender) = &self.stream_sender {
+                                let _ = sender.send(text.clone());
+                            }
                             if let Some(progress_reporter) = &self.progress_reporter {
                                 progress_reporter.mark_text_phase(&text);
                             }
