@@ -8,8 +8,17 @@ function activeTab() {
   });
 }
 
+async function targetTab(command) {
+  if (Number.isInteger(command.tabId)) {
+    const tab = await chrome.tabs.get(command.tabId);
+    if (!tab?.id) throw new Error(`Chrome tab ${command.tabId} is unavailable`);
+    return tab;
+  }
+  return activeTab();
+}
+
 async function contentCommand(command) {
-  const tab = await activeTab();
+  const tab = await targetTab(command);
   const response = await chrome.tabs.sendMessage(tab.id, command);
   return { tabId: tab.id, ...response };
 }
@@ -25,7 +34,7 @@ async function handleCommand(command) {
       return { ok: true, tabs: tabs.map(({ id, active, title, url }) => ({ id, active, title, url })) };
     }
     case "navigate": {
-      const tab = await activeTab();
+      const tab = await targetTab(command);
       await chrome.tabs.update(tab.id, { url: command.url });
       return { ok: true, tabId: tab.id, url: command.url };
     }

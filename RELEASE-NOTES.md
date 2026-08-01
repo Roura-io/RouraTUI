@@ -134,3 +134,9 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds a Claude-inspired coral visual treatment, transcript viewport, agent identity, permission mode, branch, and activity footer.
 - Keeps responses in the scrolling transcript while preserving composer position and terminal cleanup on exit.
 - Stages disabled Chrome-control foundations for later prereleases; no browser-control capability is installed or enabled in this release.
+## 2.0.0-alpha.13
+
+- Adds explicit `tabId` targeting to Chrome browser commands so RouraTUI can
+  operate on a background tab instead of whichever tab happens to be active.
+- Background-tab operations remain auditable and approval-gated; visible cursor
+  animation is shown whenever the target tab is active and visible.
