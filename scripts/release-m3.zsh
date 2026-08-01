@@ -38,13 +38,15 @@ cargo fmt --all -- --check
 cargo clippy -p rouratui-cli --all-targets -- -D warnings
 cargo test -p rouratui-cli input::tests --quiet
 cargo test -p rouratui-cli --test compact_repl_panic --quiet
-cargo build --locked --release -p rouratui-cli
+cargo build --locked --release -p rouratui-cli -p browser-bridge
 
 readonly STAGING_ROOT="$(mktemp -d /tmp/rouratui-release.XXXXXX)"
 trap 'rm -rf -- "$STAGING_ROOT"' EXIT
 
 cp target/release/rouratui "$STAGING_ROOT/rouratui"
-tar -czf "$STAGING_ROOT/rouratui-darwin-arm64.tar.gz" -C "$STAGING_ROOT" rouratui
+cp target/release/rouratui-browser-host "$STAGING_ROOT/rouratui-browser-host"
+cp -R integrations/chrome-extension "$STAGING_ROOT/chrome-extension"
+tar -czf "$STAGING_ROOT/rouratui-darwin-arm64.tar.gz" -C "$STAGING_ROOT" rouratui rouratui-browser-host chrome-extension
 (
   cd "$STAGING_ROOT"
   shasum -a 256 rouratui-darwin-arm64.tar.gz > rouratui-darwin-arm64.tar.gz.sha256
