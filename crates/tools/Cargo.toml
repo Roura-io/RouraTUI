@@ -7,6 +7,7 @@ publish.workspace = true
 
 [dependencies]
 api = { path = "../api" }
+browser-bridge = { path = "../browser-bridge" }
 commands = { path = "../commands" }
 flate2 = "1"
 plugins = { path = "../plugins" }
