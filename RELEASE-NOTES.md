@@ -1,4 +1,17 @@
-# rouraTUI v2.0.0-alpha.8
+# rouraTUI v2.0.0-alpha.9
+
+Alpha.9 keeps tool activity and permission decisions inside the full-screen
+conversation instead of falling back to raw terminal output.
+
+## New in alpha.9
+
+- Added gold tool activity cards with completed-state indicators.
+- Added coral approval cards with tool, required mode, reason, and input detail.
+- Added `Y`/Enter allow and `N`/Escape deny controls inside the TUI.
+- Expanded footer activity states for thinking, running tools, approvals, and denials.
+- Added focused tests for cards and approval decision routing.
+
+## New in alpha.8
 
 Alpha.8 streams each response into the fixed transcript as it arrives and
 labels the live response with the active agent's name.
