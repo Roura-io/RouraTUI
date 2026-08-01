@@ -1,4 +1,16 @@
-# rouraTUI v2.0.0-alpha.9
+# rouraTUI v2.0.0-alpha.10
+
+Alpha.10 connects the existing visible Chrome bridge to first-class RouraTUI
+browser tools. Browser tools are disabled by default and require
+`ROURATUI_ENABLE_BROWSER=1` after the extension and native host are installed.
+
+## New in alpha.10
+
+- Added opt-in BrowserStatus, BrowserTabs, BrowserSnapshot, BrowserNavigate,
+  BrowserPoint, BrowserClick, and BrowserType tools.
+- Kept navigation, clicks, and typing behind the existing in-TUI approval
+  cards; read-only status, tabs, snapshots, and cursor pointing remain safe.
+- Added browser-tool registry coverage and bridge-unavailable diagnostics.
 
 Alpha.9 keeps tool activity and permission decisions inside the full-screen
 conversation instead of falling back to raw terminal output.
