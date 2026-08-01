@@ -1,4 +1,16 @@
-# rouraTUI v2.0.0-alpha.7
+# rouraTUI v2.0.0-alpha.8
+
+Alpha.8 streams each response into the fixed transcript as it arrives and
+labels the live response with the active agent's name.
+
+## New in alpha.8
+
+- Connected provider text deltas directly to the full-screen transcript.
+- Kept the bottom composer fixed while the active response grows above it.
+- Preserved the final response when a provider returns a non-streamed fallback.
+- Added focused tests for ordered deltas and agent-labelled transcript output.
+
+## New in alpha.7
 
 Alpha.7 restores the full-screen conversation shell with a multiline composer
 permanently pinned to the bottom.
