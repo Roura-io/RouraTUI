@@ -75,6 +75,7 @@ struct App<'a> {
     messages: Vec<ChatMessage>,
     scroll: u16,
     status: String,
+    spinner_phase: usize,
     should_quit: bool,
     approval: Option<ApprovalCard>,
 }
@@ -82,7 +83,7 @@ struct App<'a> {
 impl App<'_> {
     fn new(config: TuiConfig) -> Self {
         let mut composer = TextArea::default();
-        composer.set_placeholder_text("Ask RouraTUI anything…");
+        composer.set_placeholder_text("  Ask RouraTUI anything…");
         composer.set_cursor_line_style(Style::default());
         composer.set_cursor_style(Style::default().fg(CORAL));
         composer.set_style(Style::default().fg(TEXT));
@@ -98,6 +99,7 @@ impl App<'_> {
             }],
             scroll: 0,
             status: "ready".to_string(),
+            spinner_phase: 0,
             should_quit: false,
             approval: None,
         }
@@ -123,7 +125,8 @@ impl App<'_> {
             role: MessageRole::Agent,
         });
         self.composer = TextArea::default();
-        self.composer.set_placeholder_text("Ask RouraTUI anything…");
+        self.composer
+            .set_placeholder_text("  Ask RouraTUI anything…");
         self.composer.set_cursor_line_style(Style::default());
         self.composer.set_cursor_style(Style::default().fg(CORAL));
         self.composer.set_style(Style::default().fg(TEXT));
@@ -244,10 +247,6 @@ fn composer_block(busy: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if busy { FAINT } else { CORAL }))
-        .title(Span::styled(
-            " ❯ ",
-            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
-        ))
         .padding(Padding::horizontal(1))
 }
 
@@ -356,6 +355,7 @@ fn read_approval_decision() -> io::Result<bool> {
 }
 
 fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
+    app.spinner_phase = app.spinner_phase.wrapping_add(1);
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -420,6 +420,21 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         frame.render_widget(card, areas[2]);
     } else {
         frame.render_widget(&app.composer, areas[2]);
+        if app.composer.lines().iter().all(|line| line.is_empty()) {
+            let caret = Paragraph::new(Line::from(Span::styled(
+                "❯",
+                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+            )));
+            frame.render_widget(
+                caret,
+                Rect {
+                    x: areas[2].x + 2,
+                    y: areas[2].y + 1,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
     }
     let footer = Line::from(vec![
         Span::styled(
@@ -440,16 +455,46 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
 }
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
+    let spinner = ["·", "✦", "✧", "✦"][app.spinner_phase % 4];
+    let model_state = if app.status == "ready" {
+        "ready".to_string()
+    } else {
+        format!("{spinner} {}", app.status)
+    };
     let header = vec![
         Line::from(vec![
-            Span::styled(" ✻ rouraTUI Code ", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("v{}", app.config.version), Style::default().fg(FAINT)),
+            Span::styled(
+                " ✻ rouraTUI Code ",
+                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("v{}", app.config.version),
+                Style::default().fg(FAINT),
+            ),
+            Span::styled("  ·  local workspace agent", Style::default().fg(FAINT)),
         ]),
         Line::from(vec![
-            Span::styled(" Agent  ", Style::default().fg(FAINT)),
-            Span::styled(app.config.agent.clone(), Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-            Span::styled("    Enter sends · Shift-Enter/Ctrl-J adds a line · PageUp/PageDown scroll · Ctrl-C exits", Style::default().fg(FAINT)),
+            Span::styled(" Model  ", Style::default().fg(FAINT)),
+            Span::styled(
+                app.config.agent.clone(),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  ·  {}", model_state),
+                Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
+            ),
+            Span::styled(
+                format!(
+                    "    ·  {}  ·  {}  ·  {}",
+                    app.config.permission_mode, app.config.branch, "session active"
+                ),
+                Style::default().fg(FAINT),
+            ),
         ]),
+        Line::from(Span::styled(
+            " Enter sends · Shift-Enter/Ctrl-J adds a line · PageUp/PageDown scroll · Ctrl-C exits",
+            Style::default().fg(FAINT),
+        )),
     ];
     frame.render_widget(Paragraph::new(header), area);
 }

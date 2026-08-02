@@ -145,3 +145,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds explicit `focus: true` support for browser commands targeting a tab.
 - Background automation remains the default; callers can opt in to focusing
   the target window/tab when visible cursor feedback is desired.
+## 2.0.0-alpha.15
+
+- Moves the orange composer caret into the input field for a familiar prompt experience.
+- Adds a live model-state indicator with a lightweight thinking glyph.
+- Refreshes the header with product/version, model state, permissions, branch, and session context.
