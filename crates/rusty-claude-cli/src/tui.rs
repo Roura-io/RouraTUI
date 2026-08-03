@@ -84,7 +84,7 @@ struct App<'a> {
 impl App<'_> {
     fn new(config: TuiConfig) -> Self {
         let mut composer = TextArea::default();
-        composer.set_placeholder_text("  Ask RouraTUI anything…");
+        composer.set_placeholder_text("Ask RouraTUI anything…");
         composer.set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
         composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         composer.set_style(Style::default().fg(TEXT));
@@ -126,8 +126,7 @@ impl App<'_> {
             role: MessageRole::Agent,
         });
         self.composer = TextArea::default();
-        self.composer
-            .set_placeholder_text("  Ask RouraTUI anything…");
+        self.composer.set_placeholder_text("Ask RouraTUI anything…");
         self.composer
             .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
         self.composer
@@ -250,7 +249,7 @@ fn composer_block(busy: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if busy { FAINT } else { CORAL }))
-        .padding(Padding::horizontal(1))
+        .padding(Padding::horizontal(2))
 }
 
 pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
@@ -424,21 +423,21 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         frame.render_widget(card, areas[2]);
     } else {
         frame.render_widget(&app.composer, areas[2]);
-        if app.composer.lines().iter().all(|line| line.is_empty()) {
-            let caret = Paragraph::new(Line::from(vec![
-                Span::styled("❯", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
-                Span::styled("▌", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
-            ]));
-            frame.render_widget(
-                caret,
-                Rect {
-                    x: areas[2].x + 2,
-                    y: areas[2].y + 1,
-                    width: 1,
-                    height: 1,
-                },
-            );
-        }
+        let empty = app.composer.lines().iter().all(|line| line.is_empty());
+        let prompt = if empty { "❯▌" } else { "❯" };
+        let caret = Paragraph::new(Line::from(Span::styled(
+            prompt,
+            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+        )));
+        frame.render_widget(
+            caret,
+            Rect {
+                x: areas[2].x + 2,
+                y: areas[2].y + 1,
+                width: 2,
+                height: 1,
+            },
+        );
     }
     let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
     let footer = Line::from(vec![

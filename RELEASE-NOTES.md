@@ -160,3 +160,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds a clearly visible composer caret when the input is focused and empty.
 - Uses a coral block caret/underline for typed input so the insertion point remains obvious.
 - Refines the composer focus treatment without changing the anchored layout.
+## 2.0.0-alpha.18
+
+- Keeps the orange `❯` prompt visible while typing.
+- Places the insertion cursor immediately beside the prompt without overlap.
+- Gives the composer a little more breathing room for the prompt and input text.
