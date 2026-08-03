@@ -192,3 +192,8 @@ Alpha.5 points the updater and product metadata at the canonical
 
 - Removes the line-wide underline from composer text.
 - Keeps only the one-cell cursor block as the active insertion indicator.
+## 2.0.0-alpha.25
+
+- Reworks the top metadata into a boxed agent-session header.
+- Adds the active working directory to the header.
+- Organizes model, status, workspace, mode, branch, and shortcuts into clear rows.

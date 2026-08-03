@@ -371,7 +371,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(6),
             Constraint::Min(5),
             Constraint::Length(5),
             Constraint::Length(1),
@@ -508,42 +508,78 @@ fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &
     } else {
         "thinking".to_string()
     };
+    let directory = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "unknown directory".to_string());
     let header = vec![
         Line::from(vec![
+            Span::styled("● ", Style::default().fg(CORAL)),
             Span::styled(
-                " ✻ rouraTUI Code ",
-                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+                "rouraTUI Code",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("v{}", app.config.version),
+                format!("  v{}", app.config.version),
                 Style::default().fg(FAINT),
             ),
-            Span::styled("  ·  local workspace agent", Style::default().fg(FAINT)),
+            Span::styled("   local workspace agent", Style::default().fg(FAINT)),
         ]),
         Line::from(vec![
-            Span::styled(" Model  ", Style::default().fg(FAINT)),
+            Span::styled(
+                "MODEL  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
             Span::styled(
                 app.config.agent.clone(),
                 Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  ·  {}", model_state),
-                Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
+                "   STATUS  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!(
-                    "    ·  {}  ·  {}  ·  {}",
-                    app.config.permission_mode, app.config.branch, "session active"
-                ),
-                Style::default().fg(FAINT),
+                model_state,
+                Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
             ),
         ]),
+        Line::from(vec![
+            Span::styled(
+                "WORKSPACE  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(directory, Style::default().fg(TEXT)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "MODE  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                app.config.permission_mode.clone(),
+                Style::default().fg(TEXT),
+            ),
+            Span::styled(
+                "   BRANCH  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.config.branch.clone(), Style::default().fg(TEXT)),
+            Span::styled("   SESSION ACTIVE", Style::default().fg(CORAL)),
+        ]),
         Line::from(Span::styled(
-            " Enter sends · Shift-Enter/Ctrl-J adds a line · PageUp/PageDown scroll · Ctrl-C exits",
+            "Enter send  ·  Shift-Enter/Ctrl-J newline  ·  PageUp/PageDown scroll  ·  Ctrl-C exit",
             Style::default().fg(FAINT),
         )),
     ];
-    frame.render_widget(Paragraph::new(header), area);
+    frame.render_widget(
+        Paragraph::new(header).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(FAINT))
+                .title(" Agent session ")
+                .padding(Padding::horizontal(1)),
+        ),
+        area,
+    );
 }
 
 fn is_submit(key: KeyEvent) -> bool {
