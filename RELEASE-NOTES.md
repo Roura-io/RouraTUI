@@ -188,3 +188,7 @@ Alpha.5 points the updater and product metadata at the canonical
 
 - Uses the same one-cell coral block cursor in both empty and typed states.
 - Keeps the cursor aligned at the text start after the prompt gap.
+## 2.0.0-alpha.24
+
+- Removes the line-wide underline from composer text.
+- Keeps only the one-cell cursor block as the active insertion indicator.

@@ -88,7 +88,7 @@ impl App<'_> {
     fn new(config: TuiConfig) -> Self {
         let mut composer = TextArea::default();
         composer.set_placeholder_text("Ask RouraTUI anything…");
-        composer.set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+        composer.set_cursor_line_style(Style::default());
         composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         composer.set_style(Style::default().fg(TEXT));
         composer.set_placeholder_style(Style::default().fg(FAINT));
@@ -131,8 +131,7 @@ impl App<'_> {
         });
         self.composer = TextArea::default();
         self.composer.set_placeholder_text("Ask RouraTUI anything…");
-        self.composer
-            .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+        self.composer.set_cursor_line_style(Style::default());
         self.composer
             .set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         self.composer.set_style(Style::default().fg(TEXT));
