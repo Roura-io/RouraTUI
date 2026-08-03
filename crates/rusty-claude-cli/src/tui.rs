@@ -23,6 +23,7 @@ const CORAL: Color = Color::Rgb(217, 119, 87);
 const FAINT: Color = Color::Rgb(100, 107, 121);
 const TEXT: Color = Color::Rgb(236, 236, 236);
 const USER: Color = Color::Rgb(138, 180, 248);
+const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ChatMessage {
@@ -308,9 +309,10 @@ where
                                 terminal.draw(|frame| draw(frame, &mut app))?;
                                 return Ok((terminal, app));
                             }
-                            if changed {
-                                terminal.draw(|frame| draw(frame, &mut app))?;
-                            }
+                            // Keep the TUI alive at 20 FPS while the model is thinking so
+                            // the loading indicator visibly animates even without events.
+                            let _ = changed;
+                            terminal.draw(|frame| draw(frame, &mut app))?;
                         }
                     });
                     let result = perform_turn(&input, turn_tx);
@@ -436,11 +438,23 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
             );
         }
     }
+    let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
     let footer = Line::from(vec![
         Span::styled(
-            format!(" {} ", app.config.agent),
-            Style::default().fg(FAINT),
+            if app.status == "ready" {
+                " Ready  "
+            } else {
+                " Thinking  "
+            },
+            Style::default()
+                .fg(if app.status == "ready" { FAINT } else { CORAL })
+                .add_modifier(Modifier::BOLD),
         ),
+        Span::styled(
+            if app.status == "ready" { "" } else { spinner },
+            Style::default().fg(CORAL),
+        ),
+        Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(
             app.config.permission_mode.clone(),
@@ -449,17 +463,23 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(app.config.branch.clone(), Style::default().fg(FAINT)),
         Span::styled(" · ", Style::default().fg(FAINT)),
-        Span::styled(app.status.clone(), Style::default().fg(CORAL)),
+        Span::styled(
+            if app.status == "ready" {
+                "ready".to_string()
+            } else {
+                app.status.clone()
+            },
+            Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
+        ),
     ]);
     frame.render_widget(Paragraph::new(footer), areas[3]);
 }
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
-    let spinner = ["·", "✦", "✧", "✦"][app.spinner_phase % 4];
     let model_state = if app.status == "ready" {
         "ready".to_string()
     } else {
-        format!("{spinner} {}", app.status)
+        "thinking".to_string()
     };
     let header = vec![
         Line::from(vec![

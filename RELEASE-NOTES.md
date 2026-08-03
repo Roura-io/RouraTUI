@@ -150,3 +150,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Moves the orange composer caret into the input field for a familiar prompt experience.
 - Adds a live model-state indicator with a lightweight thinking glyph.
 - Refreshes the header with product/version, model state, permissions, branch, and session context.
+## 2.0.0-alpha.16
+
+- Adds a real animated braille spinner while the model is generating.
+- Moves the active loading state to the footer beneath the composer.
+- Keeps the model identity in the header and avoids duplicating it in the loading row.
