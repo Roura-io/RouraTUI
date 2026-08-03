@@ -456,7 +456,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         );
         if empty && app.composer_focused {
             frame.render_widget(
-                Paragraph::new(Span::styled("│", Style::default().fg(CORAL))),
+                Paragraph::new(Span::styled(" ", Style::default().bg(CORAL))),
                 Rect {
                     x: areas[2].x + 4,
                     y: areas[2].y + 1,

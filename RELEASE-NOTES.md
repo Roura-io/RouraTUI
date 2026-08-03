@@ -184,3 +184,7 @@ Alpha.5 points the updater and product metadata at the canonical
 - Separates the orange `❯` prompt from the actual text insertion point.
 - Adds one real blank cell before text begins.
 - Keeps the normal cursor exactly at the text start when the composer is empty.
+## 2.0.0-alpha.23
+
+- Uses the same one-cell coral block cursor in both empty and typed states.
+- Keeps the cursor aligned at the text start after the prompt gap.
