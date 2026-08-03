@@ -175,3 +175,7 @@ Alpha.5 points the updater and product metadata at the canonical
 - Keeps the empty placeholder text clean instead of painting it with the block cursor.
 - Uses a clear two-space gap between the orange prompt and custom caret.
 - Retains the high-contrast cursor once text has been entered.
+## 2.0.0-alpha.21
+
+- Replaces the chunky block-like empty-field caret with a thin insertion bar.
+- Renders the prompt, spacing, and caret separately for consistent alignment.

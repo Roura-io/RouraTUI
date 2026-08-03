@@ -442,14 +442,18 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
             });
         frame.render_widget(&app.composer, areas[2]);
         let prompt = if empty && app.composer_focused {
-            "❯  ▌"
+            Line::from(vec![
+                Span::styled("❯", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+                Span::raw("  "),
+                Span::styled("│", Style::default().fg(CORAL)),
+            ])
         } else {
-            "❯"
+            Line::from(Span::styled(
+                "❯",
+                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+            ))
         };
-        let caret = Paragraph::new(Line::from(Span::styled(
-            prompt,
-            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
-        )));
+        let caret = Paragraph::new(prompt);
         frame.render_widget(
             caret,
             Rect {
