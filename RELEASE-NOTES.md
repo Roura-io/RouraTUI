@@ -170,3 +170,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds a small visual gap between the orange prompt and insertion caret.
 - Deselects the composer caret when clicking outside the input area.
 - Restores composer focus on keyboard input.
+## 2.0.0-alpha.20
+
+- Keeps the empty placeholder text clean instead of painting it with the block cursor.
+- Uses a clear two-space gap between the orange prompt and custom caret.
+- Retains the high-contrast cursor once text has been entered.

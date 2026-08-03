@@ -432,15 +432,17 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .wrap(Wrap { trim: true });
         frame.render_widget(card, areas[2]);
     } else {
-        app.composer.set_cursor_style(if app.composer_focused {
-            Style::default().fg(Color::Black).bg(CORAL)
-        } else {
-            Style::default().fg(Color::Black).bg(Color::Black)
-        });
-        frame.render_widget(&app.composer, areas[2]);
         let empty = app.composer.lines().iter().all(|line| line.is_empty());
+        app.composer
+            .set_cursor_style(if app.composer_focused && !empty {
+                Style::default().fg(Color::Black).bg(CORAL)
+            } else {
+                // The custom prompt/caret owns the empty-field cursor.
+                Style::default().fg(Color::Black).bg(Color::Black)
+            });
+        frame.render_widget(&app.composer, areas[2]);
         let prompt = if empty && app.composer_focused {
-            "❯ ▌"
+            "❯  ▌"
         } else {
             "❯"
         };
@@ -453,7 +455,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
             Rect {
                 x: areas[2].x + 2,
                 y: areas[2].y + 1,
-                width: 3,
+                width: 4,
                 height: 1,
             },
         );
