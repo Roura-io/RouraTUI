@@ -155,3 +155,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds a real animated braille spinner while the model is generating.
 - Moves the active loading state to the footer beneath the composer.
 - Keeps the model identity in the header and avoids duplicating it in the loading row.
+## 2.0.0-alpha.17
+
+- Adds a clearly visible composer caret when the input is focused and empty.
+- Uses a coral block caret/underline for typed input so the insertion point remains obvious.
+- Refines the composer focus treatment without changing the anchored layout.

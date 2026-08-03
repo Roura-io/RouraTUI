@@ -85,8 +85,8 @@ impl App<'_> {
     fn new(config: TuiConfig) -> Self {
         let mut composer = TextArea::default();
         composer.set_placeholder_text("  Ask RouraTUI anything…");
-        composer.set_cursor_line_style(Style::default());
-        composer.set_cursor_style(Style::default().fg(CORAL));
+        composer.set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+        composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         composer.set_style(Style::default().fg(TEXT));
         composer.set_placeholder_style(Style::default().fg(FAINT));
         composer.set_block(composer_block(false));
@@ -128,8 +128,10 @@ impl App<'_> {
         self.composer = TextArea::default();
         self.composer
             .set_placeholder_text("  Ask RouraTUI anything…");
-        self.composer.set_cursor_line_style(Style::default());
-        self.composer.set_cursor_style(Style::default().fg(CORAL));
+        self.composer
+            .set_cursor_line_style(Style::default().add_modifier(Modifier::UNDERLINED));
+        self.composer
+            .set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         self.composer.set_style(Style::default().fg(TEXT));
         self.composer
             .set_placeholder_style(Style::default().fg(FAINT));
@@ -423,10 +425,10 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     } else {
         frame.render_widget(&app.composer, areas[2]);
         if app.composer.lines().iter().all(|line| line.is_empty()) {
-            let caret = Paragraph::new(Line::from(Span::styled(
-                "❯",
-                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
-            )));
+            let caret = Paragraph::new(Line::from(vec![
+                Span::styled("❯", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+                Span::styled("▌", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+            ]));
             frame.render_widget(
                 caret,
                 Rect {
