@@ -165,3 +165,8 @@ Alpha.5 points the updater and product metadata at the canonical
 - Keeps the orange `❯` prompt visible while typing.
 - Places the insertion cursor immediately beside the prompt without overlap.
 - Gives the composer a little more breathing room for the prompt and input text.
+## 2.0.0-alpha.19
+
+- Adds a small visual gap between the orange prompt and insertion caret.
+- Deselects the composer caret when clicking outside the input area.
+- Restores composer focus on keyboard input.

@@ -8,7 +8,9 @@ use ratatui_core::style::{Color, Modifier, Style};
 use ratatui_core::terminal::Terminal;
 use ratatui_core::text::{Line, Span, Text};
 use ratatui_crossterm::crossterm;
-use ratatui_crossterm::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui_crossterm::crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+};
 use ratatui_crossterm::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -79,6 +81,7 @@ struct App<'a> {
     spinner_phase: usize,
     should_quit: bool,
     approval: Option<ApprovalCard>,
+    composer_focused: bool,
 }
 
 impl App<'_> {
@@ -103,6 +106,7 @@ impl App<'_> {
             spinner_phase: 0,
             should_quit: false,
             approval: None,
+            composer_focused: true,
         }
     }
 
@@ -264,9 +268,14 @@ where
         if !event::poll(Duration::from_millis(250))? {
             continue;
         }
-        let Event::Key(key) = event::read()? else {
+        let event = event::read()?;
+        if let Event::Mouse(mouse) = event {
+            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                app.composer_focused = mouse.row >= terminal.size()?.height.saturating_sub(6);
+            }
             continue;
-        };
+        }
+        let Event::Key(key) = event else { continue };
         if key.kind != event::KeyEventKind::Press {
             continue;
         }
@@ -332,6 +341,7 @@ where
         } else if key.code == KeyCode::PageDown {
             app.scroll = app.scroll.saturating_add(5);
         } else {
+            app.composer_focused = true;
             app.composer.input(Input::from(key));
         }
     }
@@ -422,9 +432,18 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .wrap(Wrap { trim: true });
         frame.render_widget(card, areas[2]);
     } else {
+        app.composer.set_cursor_style(if app.composer_focused {
+            Style::default().fg(Color::Black).bg(CORAL)
+        } else {
+            Style::default().fg(Color::Black).bg(Color::Black)
+        });
         frame.render_widget(&app.composer, areas[2]);
         let empty = app.composer.lines().iter().all(|line| line.is_empty());
-        let prompt = if empty { "❯▌" } else { "❯" };
+        let prompt = if empty && app.composer_focused {
+            "❯ ▌"
+        } else {
+            "❯"
+        };
         let caret = Paragraph::new(Line::from(Span::styled(
             prompt,
             Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
@@ -434,7 +453,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
             Rect {
                 x: areas[2].x + 2,
                 y: areas[2].y + 1,
-                width: 2,
+                width: 3,
                 height: 1,
             },
         );
