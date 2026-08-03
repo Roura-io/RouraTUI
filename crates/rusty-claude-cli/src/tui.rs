@@ -253,7 +253,7 @@ fn composer_block(busy: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if busy { FAINT } else { CORAL }))
-        .padding(Padding::horizontal(2))
+        .padding(Padding::horizontal(3))
 }
 
 pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
@@ -441,28 +441,30 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
                 Style::default().fg(Color::Black).bg(Color::Black)
             });
         frame.render_widget(&app.composer, areas[2]);
-        let prompt = if empty && app.composer_focused {
-            Line::from(vec![
-                Span::styled("❯", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
-                Span::raw("  "),
-                Span::styled("│", Style::default().fg(CORAL)),
-            ])
-        } else {
-            Line::from(Span::styled(
-                "❯",
-                Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
-            ))
-        };
-        let caret = Paragraph::new(prompt);
+        let caret = Paragraph::new(Line::from(Span::styled(
+            "❯",
+            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+        )));
         frame.render_widget(
             caret,
             Rect {
                 x: areas[2].x + 2,
                 y: areas[2].y + 1,
-                width: 4,
+                width: 1,
                 height: 1,
             },
         );
+        if empty && app.composer_focused {
+            frame.render_widget(
+                Paragraph::new(Span::styled("│", Style::default().fg(CORAL))),
+                Rect {
+                    x: areas[2].x + 4,
+                    y: areas[2].y + 1,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
     }
     let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
     let footer = Line::from(vec![

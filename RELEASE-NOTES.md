@@ -179,3 +179,8 @@ Alpha.5 points the updater and product metadata at the canonical
 
 - Replaces the chunky block-like empty-field caret with a thin insertion bar.
 - Renders the prompt, spacing, and caret separately for consistent alignment.
+## 2.0.0-alpha.22
+
+- Separates the orange `❯` prompt from the actual text insertion point.
+- Adds one real blank cell before text begins.
+- Keeps the normal cursor exactly at the text start when the composer is empty.
