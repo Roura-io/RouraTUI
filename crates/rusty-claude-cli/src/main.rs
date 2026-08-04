@@ -17406,7 +17406,7 @@ mod tests {
             &registry_with_plugin_tool(),
         )
         .expect("permission policy should build");
-        let required = policy.required_mode_for("plugin_echo");
+        let required = policy.required_mode_for("plugin_echo", "");
         assert_eq!(required, PermissionMode::WorkspaceWrite);
     }
 
