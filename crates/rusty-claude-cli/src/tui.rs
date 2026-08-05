@@ -336,7 +336,11 @@ fn composer_block(busy: bool) -> Block<'static> {
         .padding(Padding::horizontal(3))
 }
 
-pub fn run<F>(config: TuiConfig, cancel_signal: TurnCancelSignal, mut perform_turn: F) -> io::Result<()>
+pub fn run<F>(
+    config: TuiConfig,
+    cancel_signal: TurnCancelSignal,
+    mut perform_turn: F,
+) -> io::Result<()>
 where
     F: FnMut(&str, mpsc::Sender<TurnEvent>) -> Result<String, TurnFailure>,
 {
