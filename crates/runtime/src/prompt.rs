@@ -797,6 +797,46 @@ mod tests {
         }
     }
 
+    /// Runs `body` with `$HOME`/`CLAW_CONFIG_HOME` pointed at an isolated,
+    /// empty directory. Any test that calls `ProjectContext::discover` or
+    /// `load_system_prompt` without its own HOME override otherwise
+    /// silently depends on the REAL machine running the suite having no
+    /// personal instruction file in $HOME — true by coincidence until
+    /// someone's actual ~/RouraTUI.md, ~/CLAUDE.md, or ~/AGENTS.md exists
+    /// (the global instruction tier appends $HOME to every discovery walk),
+    /// at which point these tests start failing on that machine and nowhere
+    /// else. Use this for any test that doesn't already manage HOME itself.
+    fn with_isolated_home<T>(body: impl FnOnce() -> T) -> T {
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let isolated_home =
+            std::env::temp_dir().join(format!("runtime-prompt-isolated-home-{nanos}"));
+        fs::create_dir_all(&isolated_home).expect("isolated home dir");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &isolated_home);
+        std::env::set_var("CLAW_CONFIG_HOME", isolated_home.join("missing-home"));
+
+        let result = body();
+
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+        fs::remove_dir_all(&isolated_home).ok();
+        result
+    }
+
     #[test]
     fn discovers_claw_rules_files_in_sorted_order() {
         let root = temp_dir();
@@ -809,12 +849,15 @@ mod tests {
         fs::write(rules.join("ignored.json"), "ignored rule").expect("write ignored");
         fs::write(local_rules.join("c.mdc"), "c local rule").expect("write local rule");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
-        let contents = context
-            .instruction_files
-            .iter()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<_>>();
+        let contents = with_isolated_home(|| {
+            let context =
+                ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+            context
+                .instruction_files
+                .iter()
+                .map(|file| file.content.clone())
+                .collect::<Vec<_>>()
+        });
 
         assert_eq!(contents, vec!["a rule", "b rule", "c local rule"]);
         fs::remove_dir_all(root).expect("cleanup temp dir");
@@ -895,12 +938,15 @@ mod tests {
         )
         .expect("write nested instructions");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
-        let contents = context
-            .instruction_files
-            .iter()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<_>>();
+        let contents = with_isolated_home(|| {
+            let context =
+                ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+            context
+                .instruction_files
+                .iter()
+                .map(|file| file.content.clone())
+                .collect::<Vec<_>>()
+        });
 
         assert_eq!(
             contents,
@@ -922,7 +968,9 @@ mod tests {
         fs::create_dir_all(&root).expect("root dir");
         fs::write(root.join("AGENTS.md"), "agents-only instructions").expect("write AGENTS.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
 
         assert_eq!(context.instruction_files.len(), 1);
         assert!(context.instruction_files[0].path.ends_with("AGENTS.md"));
@@ -941,7 +989,9 @@ mod tests {
         )
         .expect("write .claude/CLAUDE.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
 
         assert_eq!(context.instruction_files.len(), 1);
         assert!(context.instruction_files[0]
@@ -965,7 +1015,9 @@ mod tests {
         )
         .expect("write .claude/CLAUDE.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
         let sources = context
             .instruction_files
@@ -993,7 +1045,9 @@ mod tests {
         fs::write(root.join("CLAUDE.md"), "same rules\n\n").expect("write root");
         fs::write(nested.join("CLAUDE.md"), "same rules\n").expect("write nested");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         assert_eq!(context.instruction_files.len(), 1);
         assert_eq!(
             normalize_instruction_content(&context.instruction_files[0].content),
@@ -1018,7 +1072,9 @@ mod tests {
         )
         .expect("write deep");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
 
         assert!(!rendered.contains("PARENT_CLAUDE"));
@@ -1037,7 +1093,9 @@ mod tests {
         fs::write(root.join("CLAUDE.md"), "PARENT_CLAUDE").expect("write parent");
         fs::write(nested.join("CLAUDE.md"), "SCRATCH_CLAUDE").expect("write scratch");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
 
         assert!(!rendered.contains("PARENT_CLAUDE"));
