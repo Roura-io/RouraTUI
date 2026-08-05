@@ -197,3 +197,20 @@ Alpha.5 points the updater and product metadata at the canonical
 - Reworks the top metadata into a boxed agent-session header.
 - Adds the active working directory to the header.
 - Organizes model, status, workspace, mode, branch, and shortcuts into clear rows.
+## 3.0.0
+
+- Classifies bash tool calls by their actual command instead of always
+  requiring danger-full-access, so plain reads like `ls`/`git status` no
+  longer need an unnecessary approval.
+- Fixes the TUI dropping all keyboard input for the full duration of a
+  turn; PageUp/PageDown now work while the model is thinking, and
+  scrollback position is preserved instead of being yanked to the bottom
+  on every streamed token.
+- Adds a global instruction-file tier: CLAUDE.md/AGENTS.md/RouraTUI.md in
+  `$HOME` or `$HOME/.claw` now load into every project's system prompt,
+  for standing, cross-project preferences.
+- Adds `chat-server`, an OpenAI-compatible bridge that exposes the same
+  orchestrator the interactive CLI drives over HTTP, so it can be
+  registered as a model connection inside Open WebUI. Tool calls stay
+  approval-gated, relayed to the chat client instead of a terminal
+  prompt.
