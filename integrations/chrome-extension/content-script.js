@@ -1,7 +1,12 @@
 const CURSOR_ID = "__rouratui_cursor";
 const HIGHLIGHT_ID = "__rouratui_highlight";
+const IDLE_HIDE_MS = 4000; // no command in flight this long → rouratui isn't "using" this tab
 let cursorPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+let idleHideTimer;
 
+// The cursor overlay only means something while rouratui is actively driving
+// this tab. It must never be the reason a page "looks controlled" just
+// because the extension is installed and the page happens to be open.
 function ensureCursor() {
   let cursor = document.getElementById(CURSOR_ID);
   if (cursor) return cursor;
@@ -16,9 +21,10 @@ function ensureCursor() {
     height: "28px",
     zIndex: "2147483647",
     pointerEvents: "none",
+    opacity: "0",
     transform: `translate(${cursorPosition.x}px, ${cursorPosition.y}px)`,
     filter: "drop-shadow(0 2px 4px rgba(0,0,0,.45))",
-    transition: "filter 120ms ease",
+    transition: "filter 120ms ease, opacity 150ms ease",
   });
   cursor.innerHTML = `
     <svg viewBox="0 0 22 28" width="22" height="28" aria-hidden="true">
@@ -27,6 +33,23 @@ function ensureCursor() {
     </svg>`;
   document.documentElement.appendChild(cursor);
   return cursor;
+}
+
+// showActive/hideActive — the cursor is visible only for the duration of an
+// in-flight command, plus a short idle grace period. It never lingers as a
+// standing "rouratui is watching this tab" indicator.
+function showActive() {
+  ensureCursor().style.opacity = "1";
+  clearTimeout(idleHideTimer);
+  idleHideTimer = setTimeout(hideActive, IDLE_HIDE_MS);
+}
+
+function hideActive() {
+  clearTimeout(idleHideTimer);
+  const cursor = document.getElementById(CURSOR_ID);
+  if (cursor) cursor.style.opacity = "0";
+  const highlight = document.getElementById(HIGHLIGHT_ID);
+  if (highlight) highlight.style.opacity = "0";
 }
 
 function ensureHighlight() {
@@ -82,6 +105,7 @@ function findTarget(id) {
 
 async function moveCursor(x, y, duration = 550) {
   const cursor = ensureCursor();
+  showActive();
   const start = { ...cursorPosition };
   const startedAt = performance.now();
   await new Promise((resolve) => {
@@ -150,9 +174,11 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       ensureHighlight().style.opacity = "0";
       return { ok: true };
     }
+    if (message.type === "hide") {
+      hideActive();
+      return { ok: true };
+    }
     throw new Error(`Unsupported content command: ${message.type}`);
   })().then(sendResponse).catch((error) => sendResponse({ ok: false, error: error.message }));
   return true;
 });
-
-ensureCursor();
