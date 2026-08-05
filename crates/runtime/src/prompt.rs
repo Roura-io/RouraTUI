@@ -282,6 +282,7 @@ fn instruction_file_source(path: &Path) -> &'static str {
         (_, Some("CLAW.md")) => "claw_md",
         (_, Some("AGENTS.md")) => "agents_md",
         (_, Some("CLAUDE.local.md")) => "claude_local_md",
+        (_, Some("RouraTUI.md")) => "rouratui_md",
         (Some(".claw"), Some("instructions.md")) => "claw_instructions",
         _ => "rule_file",
     }
@@ -300,6 +301,7 @@ fn discover_instruction_files(
             dir.join("CLAW.md"),
             dir.join("AGENTS.md"),
             dir.join("CLAUDE.local.md"),
+            dir.join("RouraTUI.md"),
             dir.join(".claw").join("CLAUDE.md"),
             dir.join(".claude").join("CLAUDE.md"),
             dir.join(".claw").join("instructions.md"),
@@ -323,6 +325,18 @@ fn instruction_discovery_dirs(cwd: &Path) -> Vec<PathBuf> {
             break;
         }
         cursor = dir.parent();
+    }
+    // #RTUI-GLOBAL-MEMORY: every directory above is bounded by the nearest
+    // git root — a project never saw instructions from outside itself. That
+    // left no place for standing, cross-project preferences (the "lifelong
+    // brain" — RouraTUI.md, CLAUDE.md, or AGENTS.md sitting directly in
+    // $HOME or $HOME/.claw) to live. Appended last so it's the lowest
+    // priority: project-local instructions still win on conflict.
+    if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
+        let home = PathBuf::from(home);
+        if !directories.contains(&home) {
+            directories.push(home);
+        }
     }
     directories
 }

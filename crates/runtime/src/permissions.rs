@@ -163,12 +163,55 @@ impl PermissionPolicy {
         self.active_mode
     }
 
+    /// Required mode for a tool call. `bash` is classified dynamically from
+    /// its actual command text (#RTUI-BASH-CLASSIFY): the static requirement
+    /// registered for `bash` is `DangerFullAccess`, which made every shell
+    /// call — including plain reads like `ls` or `git status` — escalate out
+    /// of `workspace-write`. `bash_validation::classify_command` (ported from
+    /// upstream, previously wired to nothing) now sets the floor instead.
     #[must_use]
-    pub fn required_mode_for(&self, tool_name: &str) -> PermissionMode {
+    pub fn required_mode_for(&self, tool_name: &str, input: &str) -> PermissionMode {
+        if tool_name == "bash" {
+            return Self::classify_bash_required_mode(input);
+        }
         self.tool_requirements
             .get(tool_name)
             .copied()
             .unwrap_or(PermissionMode::DangerFullAccess)
+    }
+
+    /// Maps a bash tool call's command text to the permission tier it
+    /// actually needs. Read-only commands (ls, cat, git status, ...) need
+    /// nothing beyond `ReadOnly`; in-workspace writes need `WorkspaceWrite`;
+    /// anything destructive, networked, package-managing, or unclassifiable
+    /// fails closed to `DangerFullAccess`.
+    fn classify_bash_required_mode(input: &str) -> PermissionMode {
+        let Some(command) = extract_permission_subject(input) else {
+            return PermissionMode::DangerFullAccess;
+        };
+        // A path that escapes the workspace (symlink, $VAR expansion, a
+        // Windows-style absolute path, or an absolute path elsewhere on
+        // disk) needs full access regardless of read/write intent — reading
+        // a secret through a symlink is exactly as much a leak as writing
+        // one would be a mutation.
+        if crate::bash_validation::escapes_workspace_via_path(&command) {
+            return PermissionMode::DangerFullAccess;
+        }
+        match crate::bash_validation::classify_command(&command) {
+            crate::bash_validation::CommandIntent::ReadOnly => PermissionMode::ReadOnly,
+            crate::bash_validation::CommandIntent::Write => {
+                match crate::bash_validation::validate_mode(
+                    &command,
+                    PermissionMode::WorkspaceWrite,
+                ) {
+                    crate::bash_validation::ValidationResult::Allow => {
+                        PermissionMode::WorkspaceWrite
+                    }
+                    _ => PermissionMode::DangerFullAccess,
+                }
+            }
+            _ => PermissionMode::DangerFullAccess,
+        }
     }
 
     #[must_use]
@@ -209,7 +252,7 @@ impl PermissionPolicy {
         }
 
         let current_mode = self.active_mode();
-        let required_mode = self.required_mode_for(tool_name);
+        let required_mode = self.required_mode_for(tool_name, input);
         let ask_rule = Self::find_matching_rule(&self.ask_rules, tool_name, input);
         let allow_rule = Self::find_matching_rule(&self.allow_rules, tool_name, input);
 
@@ -557,7 +600,14 @@ mod tests {
             allow: true,
         };
 
-        let outcome = policy.authorize("bash", "echo hi", Some(&mut prompter));
+        // "echo hi" is a read-only command under the fixed classifier — it
+        // no longer escalates, so this exercises the escalation path with a
+        // genuinely destructive command instead.
+        let outcome = policy.authorize(
+            "bash",
+            "rm -rf /tmp/rouratui-test-fixture",
+            Some(&mut prompter),
+        );
 
         assert_eq!(outcome, PermissionOutcome::Allow);
         assert_eq!(prompter.seen.len(), 1);
@@ -582,7 +632,7 @@ mod tests {
         };
 
         assert!(matches!(
-            policy.authorize("bash", "echo hi", Some(&mut prompter)),
+            policy.authorize("bash", "rm -rf /tmp/rouratui-test-fixture", Some(&mut prompter)),
             PermissionOutcome::Deny { reason } if reason == "not now"
         ));
     }

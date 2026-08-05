@@ -8,7 +8,7 @@
 //! - `pathValidation` — detect suspicious path patterns
 //! - `commandSemantics` — classify command intent
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::permissions::PermissionMode;
 
@@ -525,6 +525,75 @@ const SYSTEM_ADMIN_COMMANDS: &[&str] = &[
     "passwd",
     "visudo",
 ];
+
+/// Does any path argument in this command escape the current working
+/// directory — via an absolute path, a Windows-style absolute path, shell
+/// variable expansion, or a symlink that resolves outside it?
+///
+/// This applies regardless of read/write intent: a `cat` through a symlink
+/// to a file outside the workspace is exactly as much a leak as a `write`
+/// there would be a mutation. `classify_command` alone can only say what
+/// KIND of command this is, not where it actually reaches — this is the
+/// other half, and both gate real permission decisions in
+/// `permissions::PermissionPolicy` and the `tools` execution path.
+#[must_use]
+pub fn escapes_workspace_via_path(command: &str) -> bool {
+    let cwd = std::env::current_dir()
+        .ok()
+        .map(|cwd| cwd.canonicalize().unwrap_or(cwd));
+
+    for token in command.split_whitespace() {
+        let token = token.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | ',' | ';' | ')' | '(' | '[' | ']' | '{' | '}'
+            )
+        });
+        if token.starts_with('-') {
+            continue; // flags/options
+        }
+        if token.contains('$') {
+            return true; // shell variable expansion can hide anything
+        }
+        if looks_like_windows_absolute_path(token) {
+            return true;
+        }
+        if token.starts_with('/') || token.starts_with("~/") {
+            let path =
+                PathBuf::from(token.replace('~', &std::env::var("HOME").unwrap_or_default()));
+            if let Some(cwd) = cwd.as_ref() {
+                let resolved = path.canonicalize().unwrap_or(path);
+                if !resolved.starts_with(cwd) {
+                    return true;
+                }
+            }
+            continue;
+        }
+        if token.contains("../..") || (token.starts_with("../") && !token.starts_with("./")) {
+            return true;
+        }
+        if let Some(cwd) = cwd.as_ref() {
+            if token.starts_with('.') || token.contains('/') || Path::new(token).exists() {
+                let candidate = cwd.join(token);
+                if let Ok(canonical) = candidate.canonicalize() {
+                    if !canonical.starts_with(cwd) {
+                        return true; // symlink (or relative traversal) escapes the workspace
+                    }
+                }
+            }
+        }
+    }
+    false
+}
+
+fn looks_like_windows_absolute_path(token: &str) -> bool {
+    let bytes = token.as_bytes();
+    (bytes.len() >= 3
+        && bytes[0].is_ascii_alphabetic()
+        && bytes[1] == b':'
+        && matches!(bytes[2], b'/' | b'\\'))
+        || token.starts_with(r"\\")
+}
 
 /// Classify the semantic intent of a bash command.
 ///

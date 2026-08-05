@@ -81,6 +81,11 @@ struct App<'a> {
     spinner_phase: usize,
     should_quit: bool,
     approval: Option<ApprovalCard>,
+    /// #RTUI-STICKY-SCROLL: true once the reader has paged up. While set,
+    /// streamed tokens no longer yank the view back to the bottom on every
+    /// delta — auto-follow only resumes once they page back down to the
+    /// bottom, or send a new message.
+    user_scrolled: bool,
     composer_focused: bool,
 }
 
@@ -106,6 +111,7 @@ impl App<'_> {
             spinner_phase: 0,
             should_quit: false,
             approval: None,
+            user_scrolled: false,
             composer_focused: true,
         }
     }
@@ -139,6 +145,10 @@ impl App<'_> {
             .set_placeholder_style(Style::default().fg(FAINT));
         self.composer.set_block(composer_block(true));
         self.status = format!("{} is thinking", self.config.agent);
+        // Sending always follows the new turn, even if you'd paged up to
+        // reread earlier history.
+        self.user_scrolled = false;
+        self.scroll = u16::MAX;
         Some(input)
     }
 
@@ -166,7 +176,9 @@ impl App<'_> {
         }
         self.status = "ready".to_string();
         self.composer.set_block(composer_block(false));
-        self.scroll = u16::MAX;
+        if !self.user_scrolled {
+            self.scroll = u16::MAX;
+        }
     }
 
     fn append_stream_delta(&mut self, delta: &str) {
@@ -180,7 +192,12 @@ impl App<'_> {
         if let Some(message) = self.messages.last_mut() {
             message.text.push_str(delta);
         }
-        self.scroll = u16::MAX;
+        // #RTUI-STICKY-SCROLL: only follow the stream if the reader hasn't
+        // paged up — otherwise every token during a long answer yanked a
+        // deliberate scroll-back straight to the bottom.
+        if !self.user_scrolled {
+            self.scroll = u16::MAX;
+        }
     }
 
     fn handle_turn_event(&mut self, event: TurnEvent) -> Option<mpsc::SyncSender<bool>> {
@@ -193,7 +210,9 @@ impl App<'_> {
                     role: MessageRole::Tool,
                 });
                 self.status = format!("running {name}");
-                self.scroll = u16::MAX;
+                if !self.user_scrolled {
+                    self.scroll = u16::MAX;
+                }
             }
             TurnEvent::ToolsFinished => {
                 for message in &mut self.messages {
@@ -225,7 +244,8 @@ impl App<'_> {
 
     fn transcript(&self) -> Text<'static> {
         let mut lines = Vec::new();
-        for message in &self.messages {
+        let last_index = self.messages.len().saturating_sub(1);
+        for (index, message) in self.messages.iter().enumerate() {
             let color = match message.role {
                 MessageRole::User => USER,
                 MessageRole::Agent => CORAL,
@@ -236,12 +256,25 @@ impl App<'_> {
                 message.label.clone(),
                 Style::default().fg(color).add_modifier(Modifier::BOLD),
             )));
-            lines.extend(
-                message
-                    .text
-                    .lines()
-                    .map(|line| Line::from(line.to_string())),
-            );
+            // #RTUI-THINKING-BANNER: the empty placeholder pushed by submit()
+            // sits right below the message you just sent, waiting for the
+            // first streamed token. Show the live spinner right there
+            // instead of leaving a blank gap.
+            if index == last_index && message.role == MessageRole::Agent && message.text.is_empty()
+            {
+                let spinner = SPINNER[self.spinner_phase % SPINNER.len()];
+                lines.push(Line::from(Span::styled(
+                    format!("{spinner} thinking…"),
+                    Style::default().fg(FAINT),
+                )));
+            } else {
+                lines.extend(
+                    message
+                        .text
+                        .lines()
+                        .map(|line| Line::from(line.to_string())),
+                );
+            }
             lines.push(Line::default());
         }
         Text::from(lines)
@@ -287,6 +320,31 @@ where
                     let renderer = scope.spawn(move || -> io::Result<_> {
                         loop {
                             let mut changed = false;
+                            // #RTUI-SCROLL-DURING-TURN: this loop owns the
+                            // terminal for the whole turn (the outer event
+                            // loop in `run` is blocked on
+                            // `renderer.join()`), so without this,
+                            // PageUp/PageDown — and every other key — were
+                            // silently dropped from the moment you hit enter
+                            // until the turn finished.
+                            if event::poll(Duration::from_millis(0))? {
+                                if let Event::Key(key) = event::read()? {
+                                    if key.kind == event::KeyEventKind::Press {
+                                        match key.code {
+                                            KeyCode::PageUp => {
+                                                app.scroll = app.scroll.saturating_sub(5);
+                                                app.user_scrolled = true;
+                                                changed = true;
+                                            }
+                                            KeyCode::PageDown => {
+                                                app.scroll = app.scroll.saturating_add(5);
+                                                changed = true;
+                                            }
+                                            _ => {}
+                                        }
+                                    }
+                                }
+                            }
                             if let Ok(event) = turn_rx.recv_timeout(Duration::from_millis(50)) {
                                 if let Some(response) = app.handle_turn_event(event) {
                                     terminal.draw(|frame| draw(frame, &mut app))?;
@@ -337,6 +395,7 @@ where
             app.should_quit = true;
         } else if key.code == KeyCode::PageUp {
             app.scroll = app.scroll.saturating_sub(5);
+            app.user_scrolled = true;
         } else if key.code == KeyCode::PageDown {
             app.scroll = app.scroll.saturating_add(5);
         } else {
@@ -382,8 +441,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let transcript = app.transcript();
     let transcript_height = transcript.height() as u16;
     let viewport_height = areas[1].height.saturating_sub(2);
+    let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
-        app.scroll = transcript_height.saturating_sub(viewport_height);
+        app.scroll = bottom;
+    } else if app.user_scrolled && app.scroll >= bottom {
+        // Paged all the way back down — resume auto-follow.
+        app.user_scrolled = false;
+        app.scroll = bottom;
     }
     let paragraph = Paragraph::new(transcript)
         .block(
@@ -465,23 +529,15 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
             );
         }
     }
-    let spinner = SPINNER[app.spinner_phase % SPINNER.len()];
+    // #RTUI-THINKING-BANNER: the spinner now lives in the transcript, right
+    // below the turn it's animating for (see `App::transcript`). This bar
+    // names the model doing the work, not a second, disconnected busy
+    // indicator.
     let footer = Line::from(vec![
         Span::styled(
-            if app.status == "ready" {
-                " Ready  "
-            } else {
-                " Thinking  "
-            },
-            Style::default()
-                .fg(if app.status == "ready" { FAINT } else { CORAL })
-                .add_modifier(Modifier::BOLD),
+            format!(" {} ", app.config.agent),
+            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
         ),
-        Span::styled(
-            if app.status == "ready" { "" } else { spinner },
-            Style::default().fg(CORAL),
-        ),
-        Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(
             app.config.permission_mode.clone(),
@@ -490,14 +546,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         Span::styled(" · ", Style::default().fg(FAINT)),
         Span::styled(app.config.branch.clone(), Style::default().fg(FAINT)),
         Span::styled(" · ", Style::default().fg(FAINT)),
-        Span::styled(
-            if app.status == "ready" {
-                "ready".to_string()
-            } else {
-                app.status.clone()
-            },
-            Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
-        ),
+        Span::styled(app.status.clone(), Style::default().fg(CORAL)),
     ]);
     frame.render_widget(Paragraph::new(footer), areas[3]);
 }
@@ -717,5 +766,30 @@ mod tests {
         assert!(!decision.recv().unwrap());
         assert!(app.approval.is_some());
         assert_eq!(app.status, "approval required · shell");
+    }
+
+    #[test]
+    fn transcript_shows_a_spinner_for_the_pending_agent_turn() {
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+        });
+        app.composer.insert_str("hello");
+        assert!(app.submit().is_some());
+
+        // Right after submit, the agent placeholder is empty and waiting —
+        // the transcript should show a live spinner there, not a blank gap.
+        let waiting = app.transcript();
+        let waiting_text: String = waiting.lines.iter().map(ToString::to_string).collect();
+        assert!(waiting_text.contains("thinking…"));
+
+        // Once real content streams in, the spinner line is gone.
+        app.append_stream_delta("Hello there");
+        let streaming = app.transcript();
+        let streaming_text: String = streaming.lines.iter().map(ToString::to_string).collect();
+        assert!(!streaming_text.contains("thinking…"));
+        assert!(streaming_text.contains("Hello there"));
     }
 }

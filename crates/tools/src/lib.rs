@@ -15,8 +15,8 @@ use api::{
 use plugins::PluginTool;
 use reqwest::blocking::Client;
 use runtime::{
-    check_freshness, dedupe_superseded_commit_events, edit_file_in_workspace, execute_bash,
-    glob_search_in_workspace, grep_search_in_workspace, load_system_prompt,
+    bash_validation, check_freshness, dedupe_superseded_commit_events, edit_file_in_workspace,
+    execute_bash, glob_search_in_workspace, grep_search_in_workspace, load_system_prompt,
     lsp_client::LspRegistry,
     mcp_tool_bridge::McpToolRegistry,
     permission_enforcer::{EnforcementResult, PermissionEnforcer},
@@ -2309,104 +2309,31 @@ fn from_value<T: for<'de> Deserialize<'de>>(input: &Value) -> Result<T, String> 
     serde_json::from_value(input.clone()).map_err(|error| error.to_string())
 }
 
-/// Classify bash command permission based on command type and path.
-/// ROADMAP #50: Read-only commands targeting CWD paths get `WorkspaceWrite`,
-/// all others remain `DangerFullAccess`.
+/// Classify bash command permission from its actual command text.
+///
+/// Delegates to `bash_validation::classify_command` (the upstream-ported
+/// validation pipeline, previously dead code — see #RTUI-BASH-CLASSIFY) so
+/// this stays consistent with the same classification used by the primary
+/// conversation-loop permission check in `runtime::permissions`. Read-only
+/// commands need nothing beyond `ReadOnly`; in-workspace writes need
+/// `WorkspaceWrite`; everything else fails closed to `DangerFullAccess`.
 fn classify_bash_permission(command: &str) -> PermissionMode {
-    // Read-only commands that are safe when targeting workspace paths
-    const READ_ONLY_COMMANDS: &[&str] = &[
-        "cat", "head", "tail", "less", "more", "ls", "ll", "dir", "find", "test", "[", "[[",
-        "grep", "rg", "awk", "sed", "file", "stat", "readlink", "wc", "sort", "uniq", "cut", "tr",
-        "pwd", "echo", "printf",
-    ];
-
-    // Get the base command (first word before any args or pipes)
-    let base_cmd = command.split_whitespace().next().unwrap_or("");
-    let base_cmd = base_cmd.split('|').next().unwrap_or("").trim();
-    let base_cmd = base_cmd.split(';').next().unwrap_or("").trim();
-    let base_cmd = base_cmd.split('>').next().unwrap_or("").trim();
-    let base_cmd = base_cmd.split('<').next().unwrap_or("").trim();
-
-    // Check if it's a read-only command
-    let cmd_name = base_cmd.split('/').next_back().unwrap_or(base_cmd);
-    let is_read_only = READ_ONLY_COMMANDS.contains(&cmd_name);
-
-    if !is_read_only {
+    // A path escaping the workspace (symlink, $VAR expansion, a Windows-style
+    // absolute path, or an absolute path elsewhere on disk) needs full access
+    // regardless of read/write intent.
+    if bash_validation::escapes_workspace_via_path(command) {
         return PermissionMode::DangerFullAccess;
     }
-
-    // Check if any path argument is outside workspace
-    // Simple heuristic: check for absolute paths not starting with CWD
-    if has_dangerous_paths(command) {
-        return PermissionMode::DangerFullAccess;
-    }
-
-    PermissionMode::WorkspaceWrite
-}
-
-/// Check if command has dangerous paths (outside workspace).
-fn has_dangerous_paths(command: &str) -> bool {
-    // Look for absolute paths
-    let tokens: Vec<&str> = command.split_whitespace().collect();
-    let cwd = std::env::current_dir()
-        .ok()
-        .map(|cwd| cwd.canonicalize().unwrap_or(cwd));
-
-    for token in tokens {
-        let token = token.trim_matches(|ch: char| {
-            matches!(
-                ch,
-                '"' | '\'' | '`' | ',' | ';' | ')' | '(' | '[' | ']' | '{' | '}'
-            )
-        });
-        // Skip flags/options
-        if token.starts_with('-') {
-            continue;
-        }
-
-        if token.contains('$') {
-            return true;
-        }
-
-        if looks_like_windows_absolute_path(token) {
-            return true;
-        }
-
-        // Check for absolute paths
-        if token.starts_with('/') || token.starts_with("~/") {
-            // Check if it's within CWD
-            let path =
-                PathBuf::from(token.replace('~', &std::env::var("HOME").unwrap_or_default()));
-            if let Some(cwd) = cwd.as_ref() {
-                let resolved = path.canonicalize().unwrap_or(path);
-                if !resolved.starts_with(cwd) {
-                    return true; // Path outside workspace
-                }
+    match bash_validation::classify_command(command) {
+        bash_validation::CommandIntent::ReadOnly => PermissionMode::ReadOnly,
+        bash_validation::CommandIntent::Write => {
+            match bash_validation::validate_mode(command, PermissionMode::WorkspaceWrite) {
+                bash_validation::ValidationResult::Allow => PermissionMode::WorkspaceWrite,
+                _ => PermissionMode::DangerFullAccess,
             }
         }
-
-        // Check for parent directory traversal that escapes workspace
-        if token.contains("../..") || token.starts_with("../") && !token.starts_with("./") {
-            return true;
-        }
-
-        if let Some(cwd) = cwd.as_ref() {
-            if token.starts_with('.') || token.contains('/') || Path::new(token).exists() {
-                let candidate = if Path::new(token).is_absolute() {
-                    PathBuf::from(token)
-                } else {
-                    cwd.join(token)
-                };
-                if let Ok(canonical) = candidate.canonicalize() {
-                    if !canonical.starts_with(cwd) {
-                        return true;
-                    }
-                }
-            }
-        }
+        _ => PermissionMode::DangerFullAccess,
     }
-
-    false
 }
 
 fn looks_like_windows_absolute_path(token: &str) -> bool {
