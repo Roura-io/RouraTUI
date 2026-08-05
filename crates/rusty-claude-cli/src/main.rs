@@ -64,7 +64,8 @@ use runtime::{
     ConversationMessage, ConversationRuntime, McpConfigCollection, McpInvalidServerConfig,
     McpServer, McpServerManager, McpServerSpec, McpTool, MessageRole, ModelPricing, PermissionMode,
     PermissionPolicy, ProjectContext, PromptCacheEvent, ResolvedPermissionMode, RuntimeError,
-    RuntimeInvalidHookConfig, Session, TokenUsage, ToolError, ToolExecutor, UsageTracker,
+    RuntimeInvalidHookConfig, Session, TokenUsage, ToolError, ToolExecutor, TurnCancelSignal,
+    UsageTracker,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -7105,14 +7106,14 @@ fn run_repl(
         permission_mode: cli.permission_mode.as_str().to_string(),
         branch,
     };
-    tui::run(config, |input, stream_sender| {
+    let cancel_signal = cli.cancel_signal();
+    tui::run(config, cancel_signal, |input, stream_sender| {
         let trimmed = input.trim();
         cli.record_prompt_history(trimmed);
         let cwd = std::env::current_dir().unwrap_or_default();
         let prompt =
             try_resolve_bare_skill_prompt(&cwd, trimmed).unwrap_or_else(|| trimmed.to_string());
         cli.run_turn_captured(&prompt, stream_sender)
-            .map_err(|error| error.to_string())
     })?;
     cli.persist_session()?;
     Ok(())
@@ -7249,6 +7250,16 @@ impl BuiltRuntime {
             .expect("runtime should exist before installing hook abort signal");
         self.runtime = Some(runtime.with_hook_abort_signal(hook_abort_signal));
         self
+    }
+
+    /// A clone of the underlying `ConversationRuntime`'s cancellation
+    /// signal — callers (the TUI's Esc/Ctrl+C handler) call `.cancel()` on
+    /// it from outside the turn to stop it as soon as it's next checked.
+    fn cancel_signal(&self) -> TurnCancelSignal {
+        self.runtime
+            .as_ref()
+            .expect("runtime should exist")
+            .cancel_signal()
     }
 
     fn shutdown_plugins(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -7722,6 +7733,13 @@ impl LiveCli {
         }
     }
 
+    /// A clone of the cancellation signal for the current runtime — the TUI
+    /// calls `.cancel()` on it from its Esc/Ctrl+C handler to stop an
+    /// in-flight turn.
+    fn cancel_signal(&self) -> TurnCancelSignal {
+        self.runtime.cancel_signal()
+    }
+
     fn startup_banner(&self) -> String {
         let cwd = env::current_dir().map_or_else(
             |_| "<unknown>".to_string(),
@@ -8037,7 +8055,7 @@ impl LiveCli {
         &mut self,
         input: &str,
         stream_sender: Sender<tui::TurnEvent>,
-    ) -> Result<String, Box<dyn std::error::Error>> {
+    ) -> Result<String, tui::TurnFailure> {
         let (mut runtime, hook_abort_monitor) = self.prepare_turn_runtime(false)?;
         runtime
             .runtime
@@ -8060,8 +8078,13 @@ impl LiveCli {
                 Ok(final_text)
             }
             Err(error) => {
+                let interrupted = error.is_interrupted();
+                let message = error.to_string();
                 runtime.shutdown_plugins()?;
-                Err(Box::new(error))
+                Err(tui::TurnFailure {
+                    message,
+                    interrupted,
+                })
             }
         }
     }
@@ -12525,17 +12548,20 @@ fn build_runtime_with_plugin_state(
     plugin_registry.initialize()?;
     let policy = permission_policy(permission_mode, &feature_config, &tool_registry)
         .map_err(std::io::Error::other)?;
+    let cancel_signal = TurnCancelSignal::new();
+    let mut client = AnthropicRuntimeClient::new(
+        session_id,
+        model,
+        enable_tools,
+        emit_output,
+        allowed_tools.clone(),
+        tool_registry.clone(),
+        progress_reporter,
+    )?;
+    client.set_cancel_signal(cancel_signal.clone());
     let mut runtime = ConversationRuntime::new_with_features(
         session,
-        AnthropicRuntimeClient::new(
-            session_id,
-            model,
-            enable_tools,
-            emit_output,
-            allowed_tools.clone(),
-            tool_registry.clone(),
-            progress_reporter,
-        )?,
+        client,
         CliToolExecutor::new(
             allowed_tools.clone(),
             emit_output,
@@ -12545,7 +12571,8 @@ fn build_runtime_with_plugin_state(
         policy,
         system_prompt,
         &feature_config,
-    );
+    )
+    .with_cancel_signal(cancel_signal);
     if emit_output {
         runtime = runtime.with_hook_progress_reporter(Box::new(CliHookProgressReporter));
     }
@@ -12688,6 +12715,7 @@ pub struct AnthropicRuntimeClient {
     progress_reporter: Option<InternalPromptProgressReporter>,
     reasoning_effort: Option<String>,
     stream_sender: Option<Sender<tui::TurnEvent>>,
+    cancel_signal: Option<TurnCancelSignal>,
 }
 
 impl AnthropicRuntimeClient {
@@ -12754,6 +12782,7 @@ impl AnthropicRuntimeClient {
             progress_reporter,
             reasoning_effort: None,
             stream_sender: None,
+            cancel_signal: None,
         })
     }
 
@@ -12763,6 +12792,10 @@ impl AnthropicRuntimeClient {
 
     fn set_stream_sender(&mut self, sender: Sender<tui::TurnEvent>) {
         self.stream_sender = Some(sender);
+    }
+
+    fn set_cancel_signal(&mut self, signal: TurnCancelSignal) {
+        self.cancel_signal = Some(signal);
     }
 }
 
@@ -12859,6 +12892,20 @@ impl AnthropicRuntimeClient {
         let mut received_any_event = false;
 
         loop {
+            // #RTUI-TURN-INTERRUPT: checked between every SSE chunk, so an
+            // Esc/Ctrl+C in the TUI stops the stream promptly rather than
+            // waiting for it to finish on its own. Whatever text already
+            // reached the transcript via `stream_sender` above stays
+            // exactly as it is — `RuntimeError::interrupted()` tells the
+            // caller not to show an error banner over it.
+            if self
+                .cancel_signal
+                .as_ref()
+                .is_some_and(TurnCancelSignal::is_cancelled)
+            {
+                return Err(RuntimeError::interrupted());
+            }
+
             let next = if apply_stall_timeout && !received_any_event {
                 match tokio::time::timeout(POST_TOOL_STALL_TIMEOUT, stream.next_event()).await {
                     Ok(inner) => inner.map_err(|error| {
