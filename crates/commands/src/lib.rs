@@ -3084,6 +3084,26 @@ pub fn resolve_skill_invocation(
     Ok(dispatch)
 }
 
+/// Names of every skill discoverable from `cwd`, deduped and with shadowed
+/// (overridden by a narrower scope) definitions excluded. Suitable for
+/// autocomplete — for the full picture (source, description, drift) use
+/// `handle_skills_slash_command` instead.
+#[must_use]
+pub fn list_skill_names(cwd: &Path) -> Vec<String> {
+    let roots = discover_skill_roots(cwd);
+    let Ok(skills) = load_skills_from_roots(&roots) else {
+        return Vec::new();
+    };
+    let mut names: Vec<String> = skills
+        .into_iter()
+        .filter(|skill| skill.shadowed_by.is_none())
+        .map(|skill| skill.name)
+        .collect();
+    names.sort();
+    names.dedup();
+    names
+}
+
 pub fn resolve_skill_path(cwd: &Path, skill: &str) -> std::io::Result<PathBuf> {
     let requested = skill.trim().trim_start_matches('/').trim_start_matches('$');
     if requested.is_empty() {
@@ -5404,7 +5424,7 @@ mod tests {
     use super::{
         classify_skills_slash_command, handle_agents_slash_command_json,
         handle_plugins_slash_command, handle_skills_slash_command_json, handle_slash_command,
-        load_agents_from_roots, load_skills_from_roots, render_agents_report,
+        list_skill_names, load_agents_from_roots, load_skills_from_roots, render_agents_report,
         render_agents_report_json, render_mcp_report_json_for, render_plugins_report,
         render_plugins_report_with_failures, render_skills_report, render_slash_command_help,
         render_slash_command_help_detail, resolve_skill_path, resume_supported_slash_commands,
@@ -6507,6 +6527,60 @@ mod tests {
 
         let _ = fs::remove_dir_all(workspace);
         let _ = fs::remove_dir_all(user_home);
+    }
+
+    #[test]
+    fn list_skill_names_dedupes_sorts_and_excludes_shadowed() {
+        let _guard = env_guard();
+        let workspace = temp_dir("list-skill-names-workspace");
+        let isolated_home = temp_dir("list-skill-names-home");
+        let config_home = temp_dir("list-skill-names-config-home");
+        let codex_home = temp_dir("list-skill-names-codex-home");
+        let claude_config = temp_dir("list-skill-names-claude-config");
+        fs::create_dir_all(&isolated_home).expect("isolated home");
+        fs::create_dir_all(&config_home).expect("config home");
+        fs::create_dir_all(&codex_home).expect("codex home");
+        fs::create_dir_all(&claude_config).expect("claude config");
+        let original_home = std::env::var_os("HOME");
+        let original_claw_config_home = std::env::var_os("CLAW_CONFIG_HOME");
+        let original_codex_home = std::env::var_os("CODEX_HOME");
+        let original_claude_config_dir = std::env::var_os("CLAUDE_CONFIG_DIR");
+        std::env::set_var("HOME", &isolated_home);
+        std::env::set_var("CLAW_CONFIG_HOME", &config_home);
+        std::env::set_var("CODEX_HOME", &codex_home);
+        std::env::set_var("CLAUDE_CONFIG_DIR", &claude_config);
+
+        write_skill(
+            &workspace.join(".claw").join("skills"),
+            "zeta",
+            "Zeta skill",
+        );
+        write_skill(
+            &workspace.join(".claw").join("skills"),
+            "alpha",
+            "Alpha skill",
+        );
+        // Same name at user scope, shadowed by the project definition — must
+        // not show up twice in the completion list.
+        write_skill(
+            &isolated_home.join(".claw").join("skills"),
+            "alpha",
+            "User alpha skill",
+        );
+
+        let names = list_skill_names(&workspace);
+
+        assert_eq!(names, vec!["alpha".to_string(), "zeta".to_string()]);
+
+        restore_env_var("HOME", original_home);
+        restore_env_var("CLAW_CONFIG_HOME", original_claw_config_home);
+        restore_env_var("CODEX_HOME", original_codex_home);
+        restore_env_var("CLAUDE_CONFIG_DIR", original_claude_config_dir);
+        let _ = fs::remove_dir_all(workspace);
+        let _ = fs::remove_dir_all(isolated_home);
+        let _ = fs::remove_dir_all(config_home);
+        let _ = fs::remove_dir_all(codex_home);
+        let _ = fs::remove_dir_all(claude_config);
     }
 
     #[test]

@@ -48,10 +48,10 @@ use api::{
 use commands::{
     classify_skills_slash_command, handle_agents_slash_command, handle_agents_slash_command_json,
     handle_mcp_slash_command, handle_mcp_slash_command_json, handle_plugins_slash_command,
-    handle_skills_slash_command, handle_skills_slash_command_json, render_slash_command_help,
-    render_slash_command_help_filtered, resolve_skill_invocation, resume_supported_slash_commands,
-    slash_command_specs, validate_slash_command_input, PluginsCommandResult, SkillSlashDispatch,
-    SlashCommand,
+    handle_skills_slash_command, handle_skills_slash_command_json, list_skill_names,
+    render_slash_command_help, render_slash_command_help_filtered, resolve_skill_invocation,
+    resume_supported_slash_commands, slash_command_specs, validate_slash_command_input,
+    PluginsCommandResult, SkillSlashDispatch, SlashCommand,
 };
 use init::initialize_repo;
 use plugins::{PluginHooks, PluginManager, PluginManagerConfig, PluginRegistry};
@@ -7100,11 +7100,20 @@ fn run_repl(
         .as_ref()
         .and_then(|context| context.git_branch.clone())
         .unwrap_or_else(|| "unknown".to_string());
+    let cwd = std::env::current_dir().unwrap_or_default();
+    let slash_commands: Vec<(String, String)> = slash_command_specs()
+        .iter()
+        .filter(|spec| !STUB_COMMANDS.contains(&spec.name))
+        .map(|spec| (format!("/{}", spec.name), spec.summary.to_string()))
+        .collect();
+    let skill_names = list_skill_names(&cwd);
     let config = tui::TuiConfig {
         version: env!("CARGO_PKG_VERSION").to_string(),
         agent: cli.model.clone(),
         permission_mode: cli.permission_mode.as_str().to_string(),
         branch,
+        slash_commands,
+        skill_names,
     };
     let cancel_signal = cli.cancel_signal();
     tui::run(config, cancel_signal, |input, stream_sender| {

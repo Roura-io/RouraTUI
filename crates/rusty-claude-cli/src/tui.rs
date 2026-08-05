@@ -98,6 +98,25 @@ pub struct TuiConfig {
     pub agent: String,
     pub permission_mode: String,
     pub branch: String,
+    /// `(/name, one-line summary)` for every slash command, used to build
+    /// the "/" autocomplete dropdown. Computed once by the caller (main.rs
+    /// already owns `commands::slash_command_specs()`) rather than adding a
+    /// `commands` crate dependency here.
+    pub slash_commands: Vec<(String, String)>,
+    /// Names of skills discoverable from the current workspace, used to
+    /// build the bare-word autocomplete dropdown (skills are invoked by
+    /// typing their name directly, no leading `/`).
+    pub skill_names: Vec<String>,
+}
+
+/// One entry in the composer's autocomplete dropdown.
+struct Suggestion {
+    /// Text that replaces the composer's current (single-line) contents
+    /// when this suggestion is accepted.
+    insert: String,
+    /// What's actually drawn in the dropdown — may include a description
+    /// the raw `insert` text doesn't have room for.
+    label: String,
 }
 
 struct App<'a> {
@@ -115,17 +134,29 @@ struct App<'a> {
     /// bottom, or send a new message.
     user_scrolled: bool,
     composer_focused: bool,
+    /// Recomputed on every composer edit (see `refresh_suggestions`); empty
+    /// means no dropdown is shown.
+    suggestions: Vec<Suggestion>,
+    suggestion_index: usize,
+}
+
+/// A freshly styled, empty composer — shared by `App::new`, `submit`, and
+/// `accept_suggestion` so the placeholder/cursor/style setup lives in one
+/// place.
+fn composer_textarea<'a>() -> TextArea<'a> {
+    let mut composer = TextArea::default();
+    composer.set_placeholder_text("Ask RouraTUI anything…");
+    composer.set_cursor_line_style(Style::default());
+    composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
+    composer.set_style(Style::default().fg(TEXT));
+    composer.set_placeholder_style(Style::default().fg(FAINT));
+    composer.set_block(composer_block(false));
+    composer
 }
 
 impl App<'_> {
     fn new(config: TuiConfig) -> Self {
-        let mut composer = TextArea::default();
-        composer.set_placeholder_text("Ask RouraTUI anything…");
-        composer.set_cursor_line_style(Style::default());
-        composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
-        composer.set_style(Style::default().fg(TEXT));
-        composer.set_placeholder_style(Style::default().fg(FAINT));
-        composer.set_block(composer_block(false));
+        let composer = composer_textarea();
         Self {
             config,
             composer,
@@ -141,7 +172,76 @@ impl App<'_> {
             approval: None,
             user_scrolled: false,
             composer_focused: true,
+            suggestions: Vec::new(),
+            suggestion_index: 0,
         }
+    }
+
+    /// Recomputes the autocomplete dropdown from the composer's current
+    /// (single-line, not-yet-submitted) contents. Only the leading word is
+    /// ever completed — once a space appears the user has moved on to
+    /// arguments/a real sentence, so the dropdown gets out of the way.
+    fn refresh_suggestions(&mut self) {
+        self.suggestions.clear();
+        self.suggestion_index = 0;
+        if self.composer.lines().len() != 1 {
+            return;
+        }
+        let line = self.composer.lines()[0].as_str();
+        if line.is_empty() || line.contains(' ') {
+            return;
+        }
+        if let Some(prefix) = line.strip_prefix('/') {
+            for (name, summary) in &self.config.slash_commands {
+                let Some(rest) = name.strip_prefix('/') else {
+                    continue;
+                };
+                if !prefix.is_empty() && !rest.starts_with(prefix) {
+                    continue;
+                }
+                self.suggestions.push(Suggestion {
+                    insert: format!("{name} "),
+                    label: format!("{name} — {summary}"),
+                });
+            }
+        } else {
+            for name in &self.config.skill_names {
+                if name.starts_with(line) {
+                    self.suggestions.push(Suggestion {
+                        insert: name.clone(),
+                        label: name.clone(),
+                    });
+                }
+            }
+        }
+        self.suggestions.truncate(8);
+    }
+
+    fn select_next_suggestion(&mut self) {
+        if !self.suggestions.is_empty() {
+            self.suggestion_index = (self.suggestion_index + 1) % self.suggestions.len();
+        }
+    }
+
+    fn select_previous_suggestion(&mut self) {
+        if !self.suggestions.is_empty() {
+            self.suggestion_index = self
+                .suggestion_index
+                .checked_sub(1)
+                .unwrap_or(self.suggestions.len() - 1);
+        }
+    }
+
+    /// Replace the composer's contents with the highlighted suggestion.
+    fn accept_suggestion(&mut self) {
+        let Some(suggestion) = self.suggestions.get(self.suggestion_index) else {
+            return;
+        };
+        let insert = suggestion.insert.clone();
+        self.composer = composer_textarea();
+        self.composer.insert_str(&insert);
+        self.suggestions.clear();
+        self.suggestion_index = 0;
     }
 
     fn submit(&mut self) -> Option<String> {
@@ -153,6 +253,8 @@ impl App<'_> {
             self.should_quit = true;
             return None;
         }
+        self.suggestions.clear();
+        self.suggestion_index = 0;
         self.messages.push(ChatMessage {
             label: "You".to_string(),
             text: input.trim().to_string(),
@@ -163,14 +265,7 @@ impl App<'_> {
             text: String::new(),
             role: MessageRole::Agent,
         });
-        self.composer = TextArea::default();
-        self.composer.set_placeholder_text("Ask RouraTUI anything…");
-        self.composer.set_cursor_line_style(Style::default());
-        self.composer
-            .set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
-        self.composer.set_style(Style::default().fg(TEXT));
-        self.composer
-            .set_placeholder_style(Style::default().fg(FAINT));
+        self.composer = composer_textarea();
         self.composer.set_block(composer_block(true));
         self.status = format!("{} is thinking", self.config.agent);
         // Sending always follows the new turn, even if you'd paged up to
@@ -487,6 +582,17 @@ where
             }
         } else if is_quit(key) {
             app.should_quit = true;
+        } else if !app.suggestions.is_empty() && key.code == KeyCode::Down {
+            app.select_next_suggestion();
+        } else if !app.suggestions.is_empty() && key.code == KeyCode::Up {
+            app.select_previous_suggestion();
+        } else if !app.suggestions.is_empty() && key.code == KeyCode::Tab {
+            app.accept_suggestion();
+        } else if !app.suggestions.is_empty() && key.code == KeyCode::Esc {
+            // Dismiss the dropdown without touching the composer text —
+            // Esc here is "never mind," not "clear what I typed."
+            app.suggestions.clear();
+            app.suggestion_index = 0;
         } else if key.code == KeyCode::PageUp {
             app.scroll = app.scroll.saturating_sub(5);
             app.user_scrolled = true;
@@ -495,6 +601,7 @@ where
         } else {
             app.composer_focused = true;
             app.composer.input(Input::from(key));
+            app.refresh_suggestions();
         }
     }
     Ok(())
@@ -564,6 +671,42 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         areas[1],
         &mut scrollbar_state,
     );
+    // #RTUI-SKILL-AUTOCOMPLETE: overlay the dropdown on the transcript's
+    // bottom rows, right above the composer, rather than reserving a
+    // permanent layout row for it — the vast majority of turns never show
+    // it, so a dedicated always-there row would waste vertical space.
+    if app.approval.is_none() && !app.suggestions.is_empty() {
+        let popup_height = (app.suggestions.len() as u16 + 2).min(areas[1].height);
+        let popup_area = Rect {
+            x: areas[1].x + 2,
+            y: areas[1].y + areas[1].height.saturating_sub(popup_height),
+            width: areas[1].width.saturating_sub(4),
+            height: popup_height,
+        };
+        let lines: Vec<Line> = app
+            .suggestions
+            .iter()
+            .enumerate()
+            .map(|(index, suggestion)| {
+                let selected = index == app.suggestion_index;
+                Line::from(Span::styled(
+                    format!(" {} ", suggestion.label),
+                    if selected {
+                        Style::default().fg(Color::Black).bg(CORAL)
+                    } else {
+                        Style::default().fg(TEXT)
+                    },
+                ))
+            })
+            .collect();
+        let popup = Paragraph::new(lines).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(CORAL))
+                .title(" tab to complete · ↑↓ to choose · esc to dismiss "),
+        );
+        frame.render_widget(popup, popup_area);
+    }
     if let Some(approval) = &app.approval {
         // #RTUI-HUMANE-APPROVAL: one plain sentence (built in main.rs from
         // the tool name + its actual input) and three keys — not a tool
@@ -838,6 +981,8 @@ mod tests {
             agent: "RIO Agent".to_string(),
             permission_mode: "workspace-write".to_string(),
             branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
         });
         app.composer.insert_str("hello");
         assert!(app.submit().is_some());
@@ -856,6 +1001,8 @@ mod tests {
             agent: "RIO Agent".to_string(),
             permission_mode: "workspace-write".to_string(),
             branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
         });
         app.handle_turn_event(TurnEvent::ToolCall {
             name: "read_file".to_string(),
@@ -876,6 +1023,8 @@ mod tests {
             agent: "RIO Agent".to_string(),
             permission_mode: "workspace-write".to_string(),
             branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
         });
         let (response, decision) = mpsc::sync_channel(1);
         let returned = app.handle_turn_event(TurnEvent::ApprovalRequested {
@@ -899,6 +1048,8 @@ mod tests {
             agent: "RIO Agent".to_string(),
             permission_mode: "workspace-write".to_string(),
             branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
         });
         app.composer.insert_str("hello");
         assert!(app.submit().is_some());
@@ -915,5 +1066,89 @@ mod tests {
         let streaming_text: String = streaming.lines.iter().map(ToString::to_string).collect();
         assert!(!streaming_text.contains("thinking…"));
         assert!(streaming_text.contains("Hello there"));
+    }
+
+    fn autocomplete_test_app() -> App<'static> {
+        App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+            slash_commands: vec![
+                ("/skills".to_string(), "List or manage skills".to_string()),
+                ("/session".to_string(), "Manage sessions".to_string()),
+                ("/status".to_string(), "Show status".to_string()),
+            ],
+            skill_names: vec!["plan".to_string(), "playbook".to_string()],
+        })
+    }
+
+    #[test]
+    fn slash_prefix_filters_and_accept_replaces_composer() {
+        let mut app = autocomplete_test_app();
+        app.composer.insert_str("/s");
+        app.refresh_suggestions();
+        let labels: Vec<&str> = app
+            .suggestions
+            .iter()
+            .map(|suggestion| suggestion.label.as_str())
+            .collect();
+        assert_eq!(
+            labels,
+            vec![
+                "/skills — List or manage skills",
+                "/session — Manage sessions",
+                "/status — Show status",
+            ]
+        );
+
+        app.accept_suggestion();
+        assert_eq!(app.composer.lines().join("\n"), "/skills ");
+        assert!(app.suggestions.is_empty());
+    }
+
+    #[test]
+    fn bare_word_completes_skill_names_not_slash_commands() {
+        let mut app = autocomplete_test_app();
+        app.composer.insert_str("pla");
+        app.refresh_suggestions();
+        let labels: Vec<&str> = app
+            .suggestions
+            .iter()
+            .map(|suggestion| suggestion.label.as_str())
+            .collect();
+        assert_eq!(labels, vec!["plan", "playbook"]);
+    }
+
+    #[test]
+    fn suggestions_clear_once_a_space_is_typed() {
+        let mut app = autocomplete_test_app();
+        app.composer.insert_str("/skills ");
+        app.refresh_suggestions();
+        assert!(
+            app.suggestions.is_empty(),
+            "dropdown should get out of the way once the user is past the leading word"
+        );
+    }
+
+    #[test]
+    fn suggestion_navigation_wraps_in_both_directions() {
+        let mut app = autocomplete_test_app();
+        app.composer.insert_str("/s");
+        app.refresh_suggestions();
+        assert_eq!(app.suggestion_index, 0);
+
+        app.select_previous_suggestion();
+        assert_eq!(
+            app.suggestion_index,
+            app.suggestions.len() - 1,
+            "moving up from the first entry should wrap to the last"
+        );
+
+        app.select_next_suggestion();
+        assert_eq!(
+            app.suggestion_index, 0,
+            "moving down should wrap back to the first"
+        );
     }
 }
