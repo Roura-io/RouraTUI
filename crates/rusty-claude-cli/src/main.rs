@@ -65,8 +65,7 @@ use runtime::{
     McpServer, McpServerManager, McpServerSpec, McpTool, MessageRole, ModelPricing, PermissionMode,
     PermissionPolicy, ProjectContext, PromptCacheEvent, ResolvedPermissionMode, RuntimeError,
     RuntimeInvalidHookConfig, Session, TokenUsage, ToolError, ToolExecutor, TurnCancelSignal,
-    TurnSummary,
-    UsageTracker,
+    TurnSummary, UsageTracker,
 };
 use serde::Deserialize;
 use serde_json::{json, Map, Value};
@@ -7790,7 +7789,7 @@ impl LiveCli {
   \x1b[2mDirectory\x1b[0m        {}\n\
   \x1b[2mSession\x1b[0m          {}\n\
   \x1b[2mAuto-save\x1b[0m        {}\n\n\
-  Type \x1b[1m/help\x1b[0m for commands · \x1b[2mCtrl-R\x1b[0m for history · \x1b[2mTab\x1b[0m for completions · \x1b[2mShift+Enter\x1b[0m for newline",
+  Type \x1b[1m/help\x1b[0m for commands · \x1b[2mCtrl-R\x1b[0m for history · \x1b[2mTab\x1b[0m for workflow completions · \x1b[2mShift+Enter\x1b[0m for newline",
             env!("CARGO_PKG_VERSION"),
             self.model,
             self.permission_mode.as_str(),
@@ -7857,6 +7856,7 @@ impl LiveCli {
         match result {
             Ok(summary) => {
                 self.replace_runtime(runtime)?;
+                println!();
                 spinner.finish(
                     &format!("{} finished", self.model),
                     TerminalRenderer::new().color_theme(),
@@ -7993,6 +7993,7 @@ impl LiveCli {
                         match new_runtime.run_turn(input, Some(&mut rp)) {
                             Ok(summary) => {
                                 self.replace_runtime(new_runtime)?;
+                                println!();
                                 spinner.finish(
                                     if round == 0 {
                                         "✨ Done (after auto-compact)"
@@ -12913,6 +12914,7 @@ impl AnthropicRuntimeClient {
         let mut block_has_thinking_summary = false;
         let mut saw_stop = false;
         let mut received_any_event = false;
+        let mut started_text_output = false;
 
         loop {
             // #RTUI-TURN-INTERRUPT: checked between every SSE chunk, so an
@@ -12985,6 +12987,11 @@ impl AnthropicRuntimeClient {
                 ApiStreamEvent::ContentBlockDelta(delta) => match delta.delta {
                     ContentBlockDelta::TextDelta { text } => {
                         if !text.is_empty() {
+                            if self.emit_output && !started_text_output {
+                                writeln!(out)
+                                    .map_err(|error| RuntimeError::new(error.to_string()))?;
+                                started_text_output = true;
+                            }
                             if let Some(sender) = &self.stream_sender {
                                 let _ = sender.send(tui::TurnEvent::TextDelta(text.clone()));
                             }
@@ -14437,6 +14444,7 @@ fn print_help_to(out: &mut impl Write) -> io::Result<()> {
         "      Show ACP/Zed editor integration status (currently unsupported; aliases: --acp, -acp)"
     )?;
     writeln!(out, "      Source of truth: {OFFICIAL_REPO_SLUG}")?;
+    writeln!(out, "      Maintained by ultraworkers/claw-code")?;
     writeln!(
         out,
         "      Warning: do not `{DEPRECATED_INSTALL_COMMAND}` (deprecated stub)"

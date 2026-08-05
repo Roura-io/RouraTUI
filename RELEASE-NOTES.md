@@ -1,3 +1,25 @@
+# rouraTUI v3.0.7
+
+This release adds the first operator bridge for Rouratui: an approval-aware,
+OpenAI-compatible chat server that reuses the same M3 runtime as the
+interactive CLI. It also establishes `MAIN.md` as the shared operating and
+training contract for Claude, Codex, and Rouratui.
+
+## New in 3.0.7
+
+- Added `rouratui-chat-server` for OpenWebUI-compatible orchestration requests.
+- Kept headless turns on a dedicated worker with explicit chat-relayed approval.
+- Added shared `MAIN.md`, `AGENTS.md`, and `ROURATUI.md` instruction routing.
+- Preserved least-privilege, audit, rollback, and no-focus-stealing requirements.
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace`
+
+---
+
 # rouraTUI v2.0.0-alpha.12
 
 Alpha.12 verifies the real Chrome bridge end to end and makes the extension

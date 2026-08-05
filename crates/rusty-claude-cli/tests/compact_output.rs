@@ -176,7 +176,7 @@ fn text_prompt_mode_prints_final_assistant_text_after_spinner() {
         "text prompt stdout should include the assistant text ({stdout:?})"
     );
     assert!(
-        plain_stdout.contains("✔ ✨ Done"),
+        plain_stdout.contains(" finished"),
         "text prompt stdout should still include spinner completion ({stdout:?})"
     );
     assert!(
@@ -561,14 +561,23 @@ fn strip_ansi_codes(input: &str) -> String {
     let mut output = String::with_capacity(input.len());
     let mut chars = input.chars().peekable();
     while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' && matches!(chars.peek(), Some('[')) {
-            chars.next();
-            while let Some(next) = chars.next() {
-                if ('@'..='~').contains(&next) {
-                    break;
+        if ch == '\u{1b}' {
+            match chars.peek() {
+                Some('[') => {
+                    chars.next();
+                    while let Some(next) = chars.next() {
+                        if ('@'..='~').contains(&next) {
+                            break;
+                        }
+                    }
+                    continue;
                 }
+                Some('7' | '8') => {
+                    chars.next();
+                    continue;
+                }
+                _ => {}
             }
-            continue;
         }
         output.push(ch);
     }

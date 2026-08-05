@@ -99,7 +99,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "criterion",
  "reqwest 0.12.28",
@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "browser-bridge"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "serde_json",
 ]
@@ -374,24 +374,9 @@ dependencies = [
 
 [[package]]
 name = "chat-server"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "axum",
- "clap",
- "futures-core",
- "rouratui-cli",
- "runtime",
- "serde",
- "serde_json",
- "tokio",
- "tokio-stream",
-]
-
-[[package]]
-name = "chat-server"
-version = "2.0.0-alpha.12"
-dependencies = [
- "axum 0.8.9",
  "clap",
  "futures-core",
  "rouratui-cli",
@@ -480,7 +465,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claw-analog"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "api",
  "clap",
@@ -500,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "claw-rag-service"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "axum",
  "blake3",
@@ -552,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "plugins",
  "runtime",
@@ -575,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "compat-harness"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "commands",
  "runtime",
@@ -1811,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "mock-anthropic-service"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "api",
  "serde_json",
@@ -2004,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "plugins"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -2441,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "rouratui-cli"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "api",
  "commands",
@@ -2465,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "glob",
  "plugins",
@@ -2975,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "serde",
  "serde_json",
@@ -3227,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "3.0.6"
+version = "3.0.7"
 dependencies = [
  "api",
  "aspect-core",

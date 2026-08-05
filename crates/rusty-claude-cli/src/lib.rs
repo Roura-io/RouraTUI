@@ -22,6 +22,6 @@ pub use app::{build_runtime, AllowedToolSet, BuiltRuntime, InternalPromptProgres
 // crate::X references inside main.rs (including nested test modules),
 // which were written assuming main.rs itself is the crate root, keep
 // resolving correctly now that it is nested as `app`.
+pub(crate) use app::print_version;
 #[cfg(test)]
 pub(crate) use app::{default_permission_mode, load_session_reference};
-pub(crate) use app::print_version;
