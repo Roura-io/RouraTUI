@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+#![allow(unused_attributes)]
 #![allow(
     dead_code,
     unused_imports,
@@ -1320,7 +1321,7 @@ enum LocalHelpTopic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CliOutputFormat {
+pub(crate) enum CliOutputFormat {
     Text,
     Json,
 }
@@ -7170,7 +7171,7 @@ fn run_classic_repl(mut cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[derive(Debug, Clone)]
-struct SessionHandle {
+pub(crate) struct SessionHandle {
     id: String,
     path: PathBuf,
 }
@@ -17408,7 +17409,7 @@ mod tests {
             &registry_with_plugin_tool(),
         )
         .expect("permission policy should build");
-        let required = policy.required_mode_for("plugin_echo");
+        let required = policy.required_mode_for("plugin_echo", "");
         assert_eq!(required, PermissionMode::WorkspaceWrite);
     }
 
