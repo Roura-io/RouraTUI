@@ -220,6 +220,10 @@ const TOP_LEVEL_FIELDS: &[FieldSpec] = &[
         name: "subagentModel",
         expected: FieldType::String,
     },
+    FieldSpec {
+        name: "agentGitIdentity",
+        expected: FieldType::Object,
+    },
 ];
 
 const HOOKS_FIELDS: &[FieldSpec] = &[
@@ -853,7 +857,8 @@ mod tests {
   "hooks": {"PreToolUse": [{"hooks":[{"type":"command","command":"guard"}]}]},
   "permissions": {"defaultMode": "plan", "allow": ["Read"]},
   "mcpServers": {},
-  "sandbox": {"enabled": false}
+  "sandbox": {"enabled": false},
+  "agentGitIdentity": {"name": "roura-ai", "email": "roura-ai@users.noreply.github.com"}
 }"#;
         let parsed = JsonValue::parse(source).expect("valid json");
         let object = parsed.as_object().expect("object");
