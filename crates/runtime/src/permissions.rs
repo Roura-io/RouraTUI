@@ -79,7 +79,12 @@ pub struct PermissionRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PermissionPromptDecision {
     Allow,
-    Deny { reason: String },
+    /// Allow this call, and never ask about this exact tool call again for
+    /// the rest of the session (#RTUI-REMEMBER-APPROVAL).
+    AllowAlways,
+    Deny {
+        reason: String,
+    },
 }
 
 /// Prompting interface used when policy requires interactive approval.
@@ -220,10 +225,31 @@ impl PermissionPolicy {
         tool_name: &str,
         input: &str,
         prompter: Option<&mut dyn PermissionPrompter>,
-    ) -> PermissionOutcome {
+    ) -> (PermissionOutcome, bool) {
         self.authorize_with_context(tool_name, input, &PermissionContext::default(), prompter)
     }
 
+    /// Remembers this exact tool call as allowed for the rest of the
+    /// session — an exact-match allow rule, not a broadened pattern, so
+    /// approving one command never silently approves a different one. The
+    /// caller is responsible for invoking this when `authorize_with_context`
+    /// returns `remember = true` (#RTUI-REMEMBER-APPROVAL) — kept out of
+    /// `authorize_with_context` itself so that path can stay `&self` for its
+    /// many read-only callers.
+    pub fn remember_allow(&mut self, tool_name: &str, input: &str) {
+        let subject = extract_permission_subject(input).unwrap_or_default();
+        let escaped = subject
+            .replace('\\', r"\\")
+            .replace('(', r"\(")
+            .replace(')', r"\)");
+        let raw = format!("{tool_name}({escaped})");
+        self.allow_rules.push(PermissionRule::parse(&raw));
+    }
+
+    /// Evaluates a tool call. The second element of the return tuple is
+    /// `true` when the prompter chose "always" — the caller must then call
+    /// `remember_allow` on its own mutable `PermissionPolicy` for the
+    /// decision to actually stick (#RTUI-REMEMBER-APPROVAL).
     #[must_use]
     #[allow(clippy::too_many_lines)]
     pub fn authorize_with_context(
@@ -232,23 +258,31 @@ impl PermissionPolicy {
         input: &str,
         context: &PermissionContext,
         prompter: Option<&mut dyn PermissionPrompter>,
-    ) -> PermissionOutcome {
+    ) -> (PermissionOutcome, bool) {
         // #159: check denied_tools before rule-based evaluation. Tools listed
         // in the denied_tools config are unconditionally denied regardless of
         // permission mode.
         if self.denied_tools.iter().any(|t| t == tool_name) {
-            return PermissionOutcome::Deny {
-                reason: format!("tool '{tool_name}' has been denied by denied_tools configuration"),
-            };
+            return (
+                PermissionOutcome::Deny {
+                    reason: format!(
+                        "tool '{tool_name}' has been denied by denied_tools configuration"
+                    ),
+                },
+                false,
+            );
         }
 
         if let Some(rule) = Self::find_matching_rule(&self.deny_rules, tool_name, input) {
-            return PermissionOutcome::Deny {
-                reason: format!(
-                    "Permission to use {tool_name} has been denied by rule '{}'",
-                    rule.raw
-                ),
-            };
+            return (
+                PermissionOutcome::Deny {
+                    reason: format!(
+                        "Permission to use {tool_name} has been denied by rule '{}'",
+                        rule.raw
+                    ),
+                },
+                false,
+            );
         }
 
         let current_mode = self.active_mode();
@@ -258,12 +292,15 @@ impl PermissionPolicy {
 
         match context.override_decision() {
             Some(PermissionOverride::Deny) => {
-                return PermissionOutcome::Deny {
-                    reason: context.override_reason().map_or_else(
-                        || format!("tool '{tool_name}' denied by hook"),
-                        ToOwned::to_owned,
-                    ),
-                };
+                return (
+                    PermissionOutcome::Deny {
+                        reason: context.override_reason().map_or_else(
+                            || format!("tool '{tool_name}' denied by hook"),
+                            ToOwned::to_owned,
+                        ),
+                    },
+                    false,
+                );
             }
             Some(PermissionOverride::Ask) => {
                 let reason = context.override_reason().map_or_else(
@@ -298,7 +335,7 @@ impl PermissionPolicy {
                     || current_mode == PermissionMode::Allow
                     || current_mode >= required_mode
                 {
-                    return PermissionOutcome::Allow;
+                    return (PermissionOutcome::Allow, false);
                 }
             }
             None => {}
@@ -323,7 +360,7 @@ impl PermissionPolicy {
             || current_mode == PermissionMode::Allow
             || current_mode >= required_mode
         {
-            return PermissionOutcome::Allow;
+            return (PermissionOutcome::Allow, false);
         }
 
         if current_mode == PermissionMode::Prompt
@@ -345,15 +382,20 @@ impl PermissionPolicy {
             );
         }
 
-        PermissionOutcome::Deny {
-            reason: format!(
-                "tool '{tool_name}' requires {} permission; current mode is {}",
-                required_mode.as_str(),
-                current_mode.as_str()
-            ),
-        }
+        (
+            PermissionOutcome::Deny {
+                reason: format!(
+                    "tool '{tool_name}' requires {} permission; current mode is {}",
+                    required_mode.as_str(),
+                    current_mode.as_str()
+                ),
+            },
+            false,
+        )
     }
 
+    /// Returns the outcome, plus whether the caller should call
+    /// `remember_allow` for this exact tool call (#RTUI-REMEMBER-APPROVAL).
     fn prompt_or_deny(
         tool_name: &str,
         input: &str,
@@ -361,7 +403,7 @@ impl PermissionPolicy {
         required_mode: PermissionMode,
         reason: Option<String>,
         mut prompter: Option<&mut dyn PermissionPrompter>,
-    ) -> PermissionOutcome {
+    ) -> (PermissionOutcome, bool) {
         let request = PermissionRequest {
             tool_name: tool_name.to_string(),
             input: input.to_string(),
@@ -372,17 +414,23 @@ impl PermissionPolicy {
 
         match prompter.as_mut() {
             Some(prompter) => match prompter.decide(&request) {
-                PermissionPromptDecision::Allow => PermissionOutcome::Allow,
-                PermissionPromptDecision::Deny { reason } => PermissionOutcome::Deny { reason },
+                PermissionPromptDecision::Allow => (PermissionOutcome::Allow, false),
+                PermissionPromptDecision::AllowAlways => (PermissionOutcome::Allow, true),
+                PermissionPromptDecision::Deny { reason } => {
+                    (PermissionOutcome::Deny { reason }, false)
+                }
             },
-            None => PermissionOutcome::Deny {
-                reason: reason.unwrap_or_else(|| {
-                    format!(
-                        "tool '{tool_name}' requires approval to run while mode is {}",
-                        current_mode.as_str()
-                    )
-                }),
-            },
+            None => (
+                PermissionOutcome::Deny {
+                    reason: reason.unwrap_or_else(|| {
+                        format!(
+                            "tool '{tool_name}' requires approval to run while mode is {}",
+                            current_mode.as_str()
+                        )
+                    }),
+                },
+                false,
+            ),
         }
     }
 
@@ -566,11 +614,11 @@ mod tests {
             .with_tool_requirement("write_file", PermissionMode::WorkspaceWrite);
 
         assert_eq!(
-            policy.authorize("read_file", "{}", None),
+            policy.authorize("read_file", "{}", None).0,
             PermissionOutcome::Allow
         );
         assert_eq!(
-            policy.authorize("write_file", "{}", None),
+            policy.authorize("write_file", "{}", None).0,
             PermissionOutcome::Allow
         );
     }
@@ -582,11 +630,11 @@ mod tests {
             .with_tool_requirement("bash", PermissionMode::DangerFullAccess);
 
         assert!(matches!(
-            policy.authorize("write_file", "{}", None),
+            policy.authorize("write_file", "{}", None).0,
             PermissionOutcome::Deny { reason } if reason.contains("requires workspace-write permission")
         ));
         assert!(matches!(
-            policy.authorize("bash", "{}", None),
+            policy.authorize("bash", "{}", None).0,
             PermissionOutcome::Deny { reason } if reason.contains("requires danger-full-access permission")
         ));
     }
@@ -603,13 +651,14 @@ mod tests {
         // "echo hi" is a read-only command under the fixed classifier — it
         // no longer escalates, so this exercises the escalation path with a
         // genuinely destructive command instead.
-        let outcome = policy.authorize(
+        let (outcome, remember) = policy.authorize(
             "bash",
             "rm -rf /tmp/rouratui-test-fixture",
             Some(&mut prompter),
         );
 
         assert_eq!(outcome, PermissionOutcome::Allow);
+        assert!(!remember, "plain 'y' should not remember the decision");
         assert_eq!(prompter.seen.len(), 1);
         assert_eq!(prompter.seen[0].tool_name, "bash");
         assert_eq!(
@@ -632,7 +681,7 @@ mod tests {
         };
 
         assert!(matches!(
-            policy.authorize("bash", "rm -rf /tmp/rouratui-test-fixture", Some(&mut prompter)),
+            policy.authorize("bash", "rm -rf /tmp/rouratui-test-fixture", Some(&mut prompter)).0,
             PermissionOutcome::Deny { reason } if reason == "not now"
         ));
     }
@@ -650,11 +699,13 @@ mod tests {
             .with_permission_rules(&rules);
 
         assert_eq!(
-            policy.authorize("bash", r#"{"command":"git status"}"#, None),
+            policy
+                .authorize("bash", r#"{"command":"git status"}"#, None)
+                .0,
             PermissionOutcome::Allow
         );
         assert!(matches!(
-            policy.authorize("bash", r#"{"command":"rm -rf /tmp/x"}"#, None),
+            policy.authorize("bash", r#"{"command":"rm -rf /tmp/x"}"#, None).0,
             PermissionOutcome::Deny { reason } if reason.contains("denied by rule")
         ));
     }
@@ -669,19 +720,19 @@ mod tests {
         );
         let policy = PermissionPolicy::new(PermissionMode::Allow).with_permission_rules(&rules);
 
-        let result = policy.authorize("bash", "echo hello", None);
+        let result = policy.authorize("bash", "echo hello", None).0;
         assert!(matches!(
             result,
             PermissionOutcome::Deny { reason } if reason.contains("denied_tools")
         ));
 
-        let result = policy.authorize("write_file", "{}", None);
+        let result = policy.authorize("write_file", "{}", None).0;
         assert!(matches!(
             result,
             PermissionOutcome::Deny { reason } if reason.contains("denied_tools")
         ));
 
-        let result = policy.authorize("read_file", "{}", None);
+        let result = policy.authorize("read_file", "{}", None).0;
         assert_eq!(result, PermissionOutcome::Allow);
     }
 
@@ -701,7 +752,9 @@ mod tests {
             allow: true,
         };
 
-        let outcome = policy.authorize("bash", r#"{"command":"git status"}"#, Some(&mut prompter));
+        let outcome = policy
+            .authorize("bash", r#"{"command":"git status"}"#, Some(&mut prompter))
+            .0;
 
         assert_eq!(outcome, PermissionOutcome::Allow);
         assert_eq!(prompter.seen.len(), 1);
@@ -731,12 +784,14 @@ mod tests {
             allow: true,
         };
 
-        let outcome = policy.authorize_with_context(
-            "bash",
-            r#"{"command":"git status"}"#,
-            &context,
-            Some(&mut prompter),
-        );
+        let outcome = policy
+            .authorize_with_context(
+                "bash",
+                r#"{"command":"git status"}"#,
+                &context,
+                Some(&mut prompter),
+            )
+            .0;
 
         assert_eq!(outcome, PermissionOutcome::Allow);
         assert_eq!(prompter.seen.len(), 1);
@@ -752,7 +807,9 @@ mod tests {
         );
 
         assert_eq!(
-            policy.authorize_with_context("bash", "{}", &context, None),
+            policy
+                .authorize_with_context("bash", "{}", &context, None)
+                .0,
             PermissionOutcome::Deny {
                 reason: "blocked by hook".to_string(),
             }
@@ -772,7 +829,9 @@ mod tests {
             allow: true,
         };
 
-        let outcome = policy.authorize_with_context("bash", "{}", &context, Some(&mut prompter));
+        let outcome = policy
+            .authorize_with_context("bash", "{}", &context, Some(&mut prompter))
+            .0;
 
         assert_eq!(outcome, PermissionOutcome::Allow);
         assert_eq!(prompter.seen.len(), 1);
@@ -780,5 +839,41 @@ mod tests {
             prompter.seen[0].reason.as_deref(),
             Some("hook requested confirmation")
         );
+    }
+
+    #[test]
+    fn allow_always_reports_remember_and_persists_for_the_rest_of_the_session() {
+        let mut policy = PermissionPolicy::new(PermissionMode::WorkspaceWrite)
+            .with_tool_requirement("bash", PermissionMode::DangerFullAccess);
+        struct AlwaysPrompter;
+        impl PermissionPrompter for AlwaysPrompter {
+            fn decide(&mut self, _request: &PermissionRequest) -> PermissionPromptDecision {
+                PermissionPromptDecision::AllowAlways
+            }
+        }
+        let mut prompter = AlwaysPrompter;
+
+        let (outcome, remember) = policy.authorize(
+            "bash",
+            r#"{"command":"rm -rf /tmp/rouratui-test-fixture"}"#,
+            Some(&mut prompter),
+        );
+        assert_eq!(outcome, PermissionOutcome::Allow);
+        assert!(remember, "AllowAlways should ask the caller to remember it");
+
+        // The caller applies the remembered rule; the exact same call no
+        // longer needs a prompter at all afterward.
+        policy.remember_allow("bash", r#"{"command":"rm -rf /tmp/rouratui-test-fixture"}"#);
+        let (outcome, remember) = policy.authorize(
+            "bash",
+            r#"{"command":"rm -rf /tmp/rouratui-test-fixture"}"#,
+            None,
+        );
+        assert_eq!(outcome, PermissionOutcome::Allow);
+        assert!(!remember);
+
+        // A different command is unaffected — remembering is exact-match.
+        let (outcome, _) = policy.authorize("bash", r#"{"command":"rm -rf /tmp/other"}"#, None);
+        assert!(matches!(outcome, PermissionOutcome::Deny { .. }));
     }
 }

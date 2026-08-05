@@ -12615,15 +12615,16 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
             let (response_tx, response_rx) = mpsc::sync_channel(1);
             let event = tui::TurnEvent::ApprovalRequested {
                 tool_name: request.tool_name.clone(),
-                detail: request.input.to_string(),
-                required_mode: request.required_mode.as_str().to_string(),
-                reason: request.reason.clone(),
+                detail: describe_tool_call_plain(&request.tool_name, &request.input),
                 response: response_tx,
             };
             if sender.send(event).is_ok() {
                 return match response_rx.recv() {
-                    Ok(true) => runtime::PermissionPromptDecision::Allow,
-                    Ok(false) => runtime::PermissionPromptDecision::Deny {
+                    Ok(tui::ApprovalDecision::Allow) => runtime::PermissionPromptDecision::Allow,
+                    Ok(tui::ApprovalDecision::AllowAlways) => {
+                        runtime::PermissionPromptDecision::AllowAlways
+                    }
+                    Ok(tui::ApprovalDecision::Deny) => runtime::PermissionPromptDecision::Deny {
                         reason: format!(
                             "tool '{}' denied by user approval card",
                             request.tool_name
@@ -12975,7 +12976,7 @@ impl AnthropicRuntimeClient {
                         if let Some(sender) = &self.stream_sender {
                             let _ = sender.send(tui::TurnEvent::ToolCall {
                                 name: name.clone(),
-                                detail: input.clone(),
+                                detail: describe_tool_call_plain(&name, &input),
                             });
                         }
                         events.push(AssistantEvent::ToolUse { id, name, input });
@@ -13457,6 +13458,100 @@ fn slash_command_completion_candidates_with_sessions(
     }
 
     completions.into_iter().collect()
+}
+
+/// A plain-English, one-line description of a tool call — no JSON, no ANSI
+/// (used inside the TUI transcript and approval card, which render plain
+/// `Line`/`Span` text; `format_tool_call_start` below is for the raw stdout
+/// path and is full of escape codes that would show up as garbage there).
+fn describe_tool_call_plain(name: &str, input: &str) -> String {
+    let parsed: serde_json::Value =
+        serde_json::from_str(input).unwrap_or(serde_json::Value::String(input.to_string()));
+
+    match name {
+        "bash" | "Bash" => {
+            let command = parsed
+                .get("command")
+                .and_then(|value| value.as_str())
+                .unwrap_or_default();
+            if command.is_empty() {
+                "Run a command".to_string()
+            } else {
+                format!("Run: {}", truncate_for_summary(command, 140))
+            }
+        }
+        "read_file" | "Read" => format!("Read {}", extract_tool_path(&parsed)),
+        "write_file" | "Write" => {
+            let path = extract_tool_path(&parsed);
+            let lines = parsed
+                .get("content")
+                .and_then(|value| value.as_str())
+                .map_or(0, |content| content.lines().count());
+            format!("Write {path} ({lines} lines)")
+        }
+        "edit_file" | "Edit" => format!("Edit {}", extract_tool_path(&parsed)),
+        "glob_search" | "Glob" => {
+            let pattern = parsed
+                .get("pattern")
+                .and_then(|value| value.as_str())
+                .unwrap_or("files");
+            format!("Look for files matching {pattern}")
+        }
+        "grep_search" | "Grep" => {
+            let pattern = parsed
+                .get("pattern")
+                .and_then(|value| value.as_str())
+                .unwrap_or("a pattern");
+            format!("Search the workspace for \"{pattern}\"")
+        }
+        "web_search" | "WebSearch" => {
+            let query = parsed
+                .get("query")
+                .and_then(|value| value.as_str())
+                .unwrap_or("something");
+            format!("Search the web for \"{query}\"")
+        }
+        "web_fetch" | "WebFetch" => {
+            let url = parsed
+                .get("url")
+                .and_then(|value| value.as_str())
+                .unwrap_or("a page");
+            format!("Fetch {url}")
+        }
+        _ => humanize_tool_name(name),
+    }
+}
+
+/// Turns a `snake_case` or `PascalCase` tool name into plain words —
+/// the fallback for tool names `describe_tool_call_plain` doesn't have a
+/// specific phrasing for.
+fn humanize_tool_name(name: &str) -> String {
+    let mut words: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for ch in name.chars() {
+        if ch == '_' || ch == '-' {
+            if !current.is_empty() {
+                words.push(std::mem::take(&mut current));
+            }
+        } else if ch.is_uppercase() && !current.is_empty() {
+            words.push(std::mem::take(&mut current));
+            current.push(ch);
+        } else {
+            current.push(ch);
+        }
+    }
+    if !current.is_empty() {
+        words.push(current);
+    }
+    if words.is_empty() {
+        return name.to_string();
+    }
+    let lowered = words.join(" ").to_lowercase();
+    let mut chars = lowered.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => name.to_string(),
+    }
 }
 
 fn format_tool_call_start(name: &str, input: &str) -> String {

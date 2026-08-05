@@ -425,27 +425,36 @@ where
                     pre_hook_result.permission_reason().map(ToOwned::to_owned),
                 );
 
-                let permission_outcome = if pre_hook_result.is_cancelled() {
-                    PermissionOutcome::Deny {
-                        reason: format_hook_message(
-                            &pre_hook_result,
-                            &format!("PreToolUse hook cancelled tool `{tool_name}`"),
-                        ),
-                    }
+                let (permission_outcome, remember_approval) = if pre_hook_result.is_cancelled() {
+                    (
+                        PermissionOutcome::Deny {
+                            reason: format_hook_message(
+                                &pre_hook_result,
+                                &format!("PreToolUse hook cancelled tool `{tool_name}`"),
+                            ),
+                        },
+                        false,
+                    )
                 } else if pre_hook_result.is_failed() {
-                    PermissionOutcome::Deny {
-                        reason: format_hook_message(
-                            &pre_hook_result,
-                            &format!("PreToolUse hook failed for tool `{tool_name}`"),
-                        ),
-                    }
+                    (
+                        PermissionOutcome::Deny {
+                            reason: format_hook_message(
+                                &pre_hook_result,
+                                &format!("PreToolUse hook failed for tool `{tool_name}`"),
+                            ),
+                        },
+                        false,
+                    )
                 } else if pre_hook_result.is_denied() {
-                    PermissionOutcome::Deny {
-                        reason: format_hook_message(
-                            &pre_hook_result,
-                            &format!("PreToolUse hook denied tool `{tool_name}`"),
-                        ),
-                    }
+                    (
+                        PermissionOutcome::Deny {
+                            reason: format_hook_message(
+                                &pre_hook_result,
+                                &format!("PreToolUse hook denied tool `{tool_name}`"),
+                            ),
+                        },
+                        false,
+                    )
                 } else if let Some(prompt) = prompter.as_mut() {
                     self.permission_policy.authorize_with_context(
                         &tool_name,
@@ -461,6 +470,12 @@ where
                         None,
                     )
                 };
+                // #RTUI-REMEMBER-APPROVAL: the prompter chose "always" — make
+                // it stick for the rest of the session.
+                if remember_approval {
+                    self.permission_policy
+                        .remember_allow(&tool_name, &effective_input);
+                }
 
                 let result_message = match permission_outcome {
                     PermissionOutcome::Allow => {
