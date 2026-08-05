@@ -99,7 +99,7 @@ checksum = "330a5ed07fa54e4702c9d6c4174f74427fc0ef6e214bbd677ae50a5099946470"
 
 [[package]]
 name = "api"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "criterion",
  "reqwest 0.12.28",
@@ -295,7 +295,7 @@ dependencies = [
 
 [[package]]
 name = "browser-bridge"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "serde_json",
 ]
@@ -374,7 +374,7 @@ dependencies = [
 
 [[package]]
 name = "chat-server"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "axum",
  "clap",
@@ -465,7 +465,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claw-analog"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "api",
  "clap",
@@ -485,7 +485,7 @@ dependencies = [
 
 [[package]]
 name = "claw-rag-service"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "axum",
  "blake3",
@@ -537,7 +537,7 @@ dependencies = [
 
 [[package]]
 name = "commands"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "plugins",
  "runtime",
@@ -560,7 +560,7 @@ dependencies = [
 
 [[package]]
 name = "compat-harness"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "commands",
  "runtime",
@@ -1796,7 +1796,7 @@ dependencies = [
 
 [[package]]
 name = "mock-anthropic-service"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "api",
  "serde_json",
@@ -1989,7 +1989,7 @@ dependencies = [
 
 [[package]]
 name = "plugins"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -2426,7 +2426,7 @@ dependencies = [
 
 [[package]]
 name = "rouratui-cli"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "api",
  "commands",
@@ -2450,7 +2450,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "glob",
  "plugins",
@@ -2960,7 +2960,7 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "serde",
  "serde_json",
@@ -3212,7 +3212,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "3.0.4"
+version = "3.0.5"
 dependencies = [
  "api",
  "aspect-core",
