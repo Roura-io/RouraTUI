@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+#![allow(unused_attributes)]
 //! Library facade over the rouratui binary's internals.
 //!
 //! main.rs is included here as a module (rather than duplicated) so that
@@ -14,6 +15,7 @@
 #[path = "main.rs"]
 mod app;
 
+pub use app::init;
 pub use app::{build_runtime, AllowedToolSet, BuiltRuntime, InternalPromptProgressReporter};
 
 // Crate-internal only (not re-exported outside this crate): lets
@@ -22,4 +24,4 @@ pub use app::{build_runtime, AllowedToolSet, BuiltRuntime, InternalPromptProgres
 // resolving correctly now that it is nested as `app`.
 #[cfg(test)]
 pub(crate) use app::{default_permission_mode, load_session_reference};
-pub(crate) use app::{init, print_version};
+pub(crate) use app::print_version;

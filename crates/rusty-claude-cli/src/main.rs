@@ -15,7 +15,7 @@
     clippy::unnecessary_wraps,
     clippy::unused_self
 )]
-pub(crate) mod init;
+pub mod init;
 mod input;
 mod render;
 mod setup_wizard;
@@ -65,6 +65,7 @@ use runtime::{
     McpServer, McpServerManager, McpServerSpec, McpTool, MessageRole, ModelPricing, PermissionMode,
     PermissionPolicy, ProjectContext, PromptCacheEvent, ResolvedPermissionMode, RuntimeError,
     RuntimeInvalidHookConfig, Session, TokenUsage, ToolError, ToolExecutor, TurnCancelSignal,
+    TurnSummary,
     UsageTracker,
 };
 use serde::Deserialize;
@@ -7250,6 +7251,19 @@ impl BuiltRuntime {
             mcp_state,
             mcp_active: true,
         }
+    }
+
+    /// Run one headless turn through the same runtime used by the interactive
+    /// CLI. The chat bridge owns this wrapper on its dedicated worker thread.
+    pub fn run_turn(
+        &mut self,
+        input: impl Into<String>,
+        prompter: Option<&mut dyn runtime::PermissionPrompter>,
+    ) -> Result<TurnSummary, runtime::RuntimeError> {
+        self.runtime
+            .as_mut()
+            .ok_or_else(|| runtime::RuntimeError::new("runtime is shut down"))?
+            .run_turn(input, prompter)
     }
 
     fn with_hook_abort_signal(mut self, hook_abort_signal: runtime::HookAbortSignal) -> Self {
