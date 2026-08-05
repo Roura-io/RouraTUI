@@ -3,6 +3,8 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Duration;
 
+use runtime::TurnCancelSignal;
+
 use ratatui_core::layout::{Constraint, Direction, Layout, Rect};
 use ratatui_core::style::{Color, Modifier, Style};
 use ratatui_core::terminal::Terminal;
@@ -70,6 +72,25 @@ pub enum ApprovalDecision {
 struct ApprovalCard {
     tool_name: String,
     detail: String,
+}
+
+/// A turn ended without producing a final answer — either it genuinely
+/// failed, or the user interrupted it (Esc/Ctrl+C mid-turn). The two are
+/// kept distinct so `App::finish_turn` can skip showing an "Error" message
+/// over an interrupt: whatever content already streamed to the transcript
+/// via `TurnEvent::TextDelta` just stays as it was.
+pub struct TurnFailure {
+    pub message: String,
+    pub interrupted: bool,
+}
+
+impl From<Box<dyn std::error::Error>> for TurnFailure {
+    fn from(error: Box<dyn std::error::Error>) -> Self {
+        Self {
+            message: error.to_string(),
+            interrupted: false,
+        }
+    }
 }
 
 pub struct TuiConfig {
@@ -159,7 +180,7 @@ impl App<'_> {
         Some(input)
     }
 
-    fn finish_turn(&mut self, result: Result<String, String>) {
+    fn finish_turn(&mut self, result: Result<String, TurnFailure>) {
         match result {
             Ok(text) => {
                 if let Some(message) = self.messages.last_mut() {
@@ -168,17 +189,32 @@ impl App<'_> {
                     }
                 }
             }
-            Err(error) => {
+            Err(failure) => {
+                let had_partial_content = self.messages.last().is_some_and(|message| {
+                    message.role == MessageRole::Agent && !message.text.is_empty()
+                });
                 if self.messages.last().is_some_and(|message| {
                     message.role == MessageRole::Agent && message.text.is_empty()
                 }) {
                     self.messages.pop();
                 }
-                self.messages.push(ChatMessage {
-                    label: "Error".to_string(),
-                    text: error,
-                    role: MessageRole::System,
-                });
+                // An interrupt with partial content already visible needs no
+                // extra message — the streamed text stands on its own. An
+                // interrupt with nothing streamed yet still gets a quiet
+                // marker so the composer doesn't just go silently idle.
+                if !failure.interrupted {
+                    self.messages.push(ChatMessage {
+                        label: "Error".to_string(),
+                        text: failure.message,
+                        role: MessageRole::System,
+                    });
+                } else if !had_partial_content {
+                    self.messages.push(ChatMessage {
+                        label: "Interrupted".to_string(),
+                        text: String::new(),
+                        role: MessageRole::System,
+                    });
+                }
             }
         }
         self.status = "ready".to_string();
@@ -300,9 +336,9 @@ fn composer_block(busy: bool) -> Block<'static> {
         .padding(Padding::horizontal(3))
 }
 
-pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
+pub fn run<F>(config: TuiConfig, cancel_signal: TurnCancelSignal, mut perform_turn: F) -> io::Result<()>
 where
-    F: FnMut(&str, mpsc::Sender<TurnEvent>) -> Result<String, String>,
+    F: FnMut(&str, mpsc::Sender<TurnEvent>) -> Result<String, TurnFailure>,
 {
     let mut terminal = TerminalSession::enter()?;
     let mut app = App::new(config);
@@ -340,9 +376,10 @@ where
         if is_submit(key) {
             if let Some(input) = app.submit() {
                 terminal.draw(|frame| draw(frame, &mut app))?;
+                let renderer_cancel_signal = cancel_signal.clone();
                 let (next_terminal, next_app) = thread::scope(|scope| {
                     let (turn_tx, turn_rx) = mpsc::channel::<TurnEvent>();
-                    let (result_tx, result_rx) = mpsc::channel::<Result<String, String>>();
+                    let (result_tx, result_rx) = mpsc::channel::<Result<String, TurnFailure>>();
                     let renderer = scope.spawn(move || -> io::Result<_> {
                         loop {
                             let mut changed = false;
@@ -356,17 +393,27 @@ where
                             if event::poll(Duration::from_millis(0))? {
                                 match event::read()? {
                                     Event::Key(key) if key.kind == event::KeyEventKind::Press => {
-                                        match key.code {
-                                            KeyCode::PageUp => {
-                                                app.scroll = app.scroll.saturating_sub(5);
-                                                app.user_scrolled = true;
-                                                changed = true;
+                                        // #RTUI-TURN-INTERRUPT: checked before
+                                        // PageUp/PageDown so Esc/Ctrl+C always
+                                        // stops the turn even if it happens to
+                                        // collide with some future key binding.
+                                        if is_interrupt(key) {
+                                            renderer_cancel_signal.cancel();
+                                            app.status = "stopping…".to_string();
+                                            changed = true;
+                                        } else {
+                                            match key.code {
+                                                KeyCode::PageUp => {
+                                                    app.scroll = app.scroll.saturating_sub(5);
+                                                    app.user_scrolled = true;
+                                                    changed = true;
+                                                }
+                                                KeyCode::PageDown => {
+                                                    app.scroll = app.scroll.saturating_add(5);
+                                                    changed = true;
+                                                }
+                                                _ => {}
                                             }
-                                            KeyCode::PageDown => {
-                                                app.scroll = app.scroll.saturating_add(5);
-                                                changed = true;
-                                            }
-                                            _ => {}
                                         }
                                     }
                                     Event::Mouse(mouse) => match mouse.kind {
@@ -704,6 +751,14 @@ fn is_submit(key: KeyEvent) -> bool {
 
 fn is_quit(key: KeyEvent) -> bool {
     key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+/// Esc or Ctrl+C *during a turn* means "stop this turn," not "quit the
+/// app" — `is_quit` is reused here since it's the same chord, just handled
+/// by a different loop (the in-turn renderer below, rather than `run`'s
+/// idle loop) with a different meaning.
+fn is_interrupt(key: KeyEvent) -> bool {
+    key.code == KeyCode::Esc || is_quit(key)
 }
 
 struct TerminalSession {
