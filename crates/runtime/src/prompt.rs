@@ -657,13 +657,40 @@ pub fn load_system_prompt_with_context(
     let config = ConfigLoader::default_for(&cwd).load()?;
     let project_context =
         discover_with_git_and_rules_import(&cwd, current_date.into(), config.rules_import())?;
-    let sections = SystemPromptBuilder::new()
+    let mut builder = SystemPromptBuilder::new()
         .with_os(os_name, os_version)
         .with_model_family(model_family)
-        .with_project_context(project_context.clone())
-        .with_runtime_config(config)
-        .build();
+        .with_project_context(project_context.clone());
+    if let Some(section) = render_agent_git_identity_section(&config) {
+        builder = builder.append_section(section);
+    }
+    let sections = builder.with_runtime_config(config).build();
     Ok((sections, project_context))
+}
+
+/// Renders guidance for the optional `agentGitIdentity` setting
+/// (`{"name": ..., "email": ...}`, any discovered settings file — see
+/// `bash::agent_git_committer_env`, which applies it as `GIT_COMMITTER_*`
+/// on every tool-run command). `GIT_COMMITTER_*` is set unconditionally by
+/// the runtime and needs no model action; `GIT_AUTHOR_*` is deliberately
+/// left to the model's judgment per call, since a rebase/cherry-pick must
+/// preserve the ORIGINAL author of the commit being replayed, while a
+/// brand-new commit the agent is creating from scratch should carry this
+/// identity as its author too — only the model, reading the actual git
+/// subcommand and intent, can tell those two cases apart.
+fn render_agent_git_identity_section(config: &RuntimeConfig) -> Option<String> {
+    let identity = config.get("agentGitIdentity")?.as_object()?;
+    let name = identity.get("name")?.as_str()?;
+    let email = identity.get("email")?.as_str()?;
+    Some(format!(
+        "# Agent git identity\n\
+         - This environment already sets GIT_COMMITTER_NAME/EMAIL to \"{name}\" / \"{email}\" \
+         on every command you run — no action needed for that.\n\
+         - For a brand-new commit you are creating (not replaying someone else's — a rebase, \
+         cherry-pick, or amend must keep the ORIGINAL author), also pass \
+         --author=\"{name} <{email}>\" so the author field matches too.\n\
+         - Never use the human operator's own GitHub identity as the author of agent-made commits."
+    ))
 }
 
 fn render_config_section(config: &RuntimeConfig) -> String {
@@ -770,6 +797,46 @@ mod tests {
         }
     }
 
+    /// Runs `body` with `$HOME`/`CLAW_CONFIG_HOME` pointed at an isolated,
+    /// empty directory. Any test that calls `ProjectContext::discover` or
+    /// `load_system_prompt` without its own HOME override otherwise
+    /// silently depends on the REAL machine running the suite having no
+    /// personal instruction file in $HOME — true by coincidence until
+    /// someone's actual ~/RouraTUI.md, ~/CLAUDE.md, or ~/AGENTS.md exists
+    /// (the global instruction tier appends $HOME to every discovery walk),
+    /// at which point these tests start failing on that machine and nowhere
+    /// else. Use this for any test that doesn't already manage HOME itself.
+    fn with_isolated_home<T>(body: impl FnOnce() -> T) -> T {
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let nanos = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let isolated_home =
+            std::env::temp_dir().join(format!("runtime-prompt-isolated-home-{nanos}"));
+        fs::create_dir_all(&isolated_home).expect("isolated home dir");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &isolated_home);
+        std::env::set_var("CLAW_CONFIG_HOME", isolated_home.join("missing-home"));
+
+        let result = body();
+
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+        fs::remove_dir_all(&isolated_home).ok();
+        result
+    }
+
     #[test]
     fn discovers_claw_rules_files_in_sorted_order() {
         let root = temp_dir();
@@ -782,12 +849,15 @@ mod tests {
         fs::write(rules.join("ignored.json"), "ignored rule").expect("write ignored");
         fs::write(local_rules.join("c.mdc"), "c local rule").expect("write local rule");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
-        let contents = context
-            .instruction_files
-            .iter()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<_>>();
+        let contents = with_isolated_home(|| {
+            let context =
+                ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+            context
+                .instruction_files
+                .iter()
+                .map(|file| file.content.clone())
+                .collect::<Vec<_>>()
+        });
 
         assert_eq!(contents, vec!["a rule", "b rule", "c local rule"]);
         fs::remove_dir_all(root).expect("cleanup temp dir");
@@ -868,12 +938,15 @@ mod tests {
         )
         .expect("write nested instructions");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
-        let contents = context
-            .instruction_files
-            .iter()
-            .map(|file| file.content.as_str())
-            .collect::<Vec<_>>();
+        let contents = with_isolated_home(|| {
+            let context =
+                ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+            context
+                .instruction_files
+                .iter()
+                .map(|file| file.content.clone())
+                .collect::<Vec<_>>()
+        });
 
         assert_eq!(
             contents,
@@ -895,7 +968,9 @@ mod tests {
         fs::create_dir_all(&root).expect("root dir");
         fs::write(root.join("AGENTS.md"), "agents-only instructions").expect("write AGENTS.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
 
         assert_eq!(context.instruction_files.len(), 1);
         assert!(context.instruction_files[0].path.ends_with("AGENTS.md"));
@@ -914,7 +989,9 @@ mod tests {
         )
         .expect("write .claude/CLAUDE.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
 
         assert_eq!(context.instruction_files.len(), 1);
         assert!(context.instruction_files[0]
@@ -938,7 +1015,9 @@ mod tests {
         )
         .expect("write .claude/CLAUDE.md");
 
-        let context = ProjectContext::discover(&root, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&root, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
         let sources = context
             .instruction_files
@@ -966,7 +1045,9 @@ mod tests {
         fs::write(root.join("CLAUDE.md"), "same rules\n\n").expect("write root");
         fs::write(nested.join("CLAUDE.md"), "same rules\n").expect("write nested");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         assert_eq!(context.instruction_files.len(), 1);
         assert_eq!(
             normalize_instruction_content(&context.instruction_files[0].content),
@@ -991,7 +1072,9 @@ mod tests {
         )
         .expect("write deep");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
 
         assert!(!rendered.contains("PARENT_CLAUDE"));
@@ -1010,7 +1093,9 @@ mod tests {
         fs::write(root.join("CLAUDE.md"), "PARENT_CLAUDE").expect("write parent");
         fs::write(nested.join("CLAUDE.md"), "SCRATCH_CLAUDE").expect("write scratch");
 
-        let context = ProjectContext::discover(&nested, "2026-03-31").expect("context should load");
+        let context = with_isolated_home(|| {
+            ProjectContext::discover(&nested, "2026-03-31").expect("context should load")
+        });
         let rendered = render_instruction_files(&context.instruction_files);
 
         assert!(!rendered.contains("PARENT_CLAUDE"));
@@ -1239,6 +1324,89 @@ mod tests {
 
         assert!(prompt.contains("Project rules"));
         assert!(prompt.contains("permissionMode"));
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_system_prompt_surfaces_configured_agent_git_identity() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join(".claw")).expect("claw dir");
+        fs::write(
+            root.join(".claw").join("settings.json"),
+            r#"{"agentGitIdentity":{"name":"roura-ai","email":"roura-ai@users.noreply.github.com"}}"#,
+        )
+        .expect("write settings");
+
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let previous = std::env::current_dir().expect("cwd");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &root);
+        std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_current_dir(&root).expect("change cwd");
+        let prompt = super::load_system_prompt(
+            &root,
+            "2026-03-31",
+            "linux",
+            "6.8",
+            ModelFamilyIdentity::Claude,
+        )
+        .expect("system prompt should load")
+        .join("\n\n");
+        std::env::set_current_dir(previous).expect("restore cwd");
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+
+        assert!(prompt.contains("roura-ai"));
+        assert!(prompt.contains("roura-ai@users.noreply.github.com"));
+        assert!(prompt.contains("--author="));
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_system_prompt_omits_agent_git_identity_section_when_unconfigured() {
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("root dir");
+
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let previous = std::env::current_dir().expect("cwd");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &root);
+        std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_current_dir(&root).expect("change cwd");
+        let prompt = super::load_system_prompt(
+            &root,
+            "2026-03-31",
+            "linux",
+            "6.8",
+            ModelFamilyIdentity::Claude,
+        )
+        .expect("system prompt should load")
+        .join("\n\n");
+        std::env::set_current_dir(previous).expect("restore cwd");
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+
+        assert!(!prompt.contains("Agent git identity"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 
