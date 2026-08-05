@@ -43,7 +43,9 @@ impl PermissionEnforcer {
             return EnforcementResult::Allowed;
         }
 
-        let outcome = self.policy.authorize(tool_name, input, None);
+        // No prompter is ever passed here, so `authorize` can never resolve
+        // to the "remember" path — the bool is always false.
+        let (outcome, _remember) = self.policy.authorize(tool_name, input, None);
 
         match outcome {
             PermissionOutcome::Allow => EnforcementResult::Allowed,
