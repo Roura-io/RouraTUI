@@ -1,4 +1,5 @@
 #![recursion_limit = "256"]
+#![allow(unused_attributes)]
 #![allow(
     dead_code,
     unused_imports,
@@ -14,7 +15,7 @@
     clippy::unnecessary_wraps,
     clippy::unused_self
 )]
-mod init;
+pub(crate) mod init;
 mod input;
 mod render;
 mod setup_wizard;
@@ -323,7 +324,7 @@ fn should_reject_unknown_option_like(value: &str) -> bool {
             && suggest_closest_term(value, CLI_OPTION_SUGGESTIONS).is_some())
 }
 
-type AllowedToolSet = BTreeSet<String>;
+pub type AllowedToolSet = BTreeSet<String>;
 type RuntimePluginStateBuildOutput = (
     Option<Arc<Mutex<RuntimeMcpState>>>,
     Vec<RuntimeToolDefinition>,
@@ -1320,7 +1321,7 @@ enum LocalHelpTopic {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CliOutputFormat {
+pub(crate) enum CliOutputFormat {
     Text,
     Json,
 }
@@ -3097,7 +3098,7 @@ fn permission_mode_from_resolved(mode: ResolvedPermissionMode) -> PermissionMode
     }
 }
 
-fn default_permission_mode() -> PermissionMode {
+pub(crate) fn default_permission_mode() -> PermissionMode {
     permission_mode_provenance_for_current_dir().mode
 }
 
@@ -5013,7 +5014,9 @@ fn print_system_prompt(
     Ok(())
 }
 
-fn print_version(output_format: CliOutputFormat) -> Result<(), Box<dyn std::error::Error>> {
+pub(crate) fn print_version(
+    output_format: CliOutputFormat,
+) -> Result<(), Box<dyn std::error::Error>> {
     match output_format {
         CliOutputFormat::Text => println!("{}", render_version_report()),
         CliOutputFormat::Json => {
@@ -7168,7 +7171,7 @@ fn run_classic_repl(mut cli: LiveCli) -> Result<(), Box<dyn std::error::Error>> 
 }
 
 #[derive(Debug, Clone)]
-struct SessionHandle {
+pub(crate) struct SessionHandle {
     id: String,
     path: PathBuf,
 }
@@ -7216,7 +7219,7 @@ struct RuntimeMcpState {
     degraded_report: Option<runtime::McpDegradedReport>,
 }
 
-struct BuiltRuntime {
+pub struct BuiltRuntime {
     runtime: Option<ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>>,
     plugin_registry: PluginRegistry,
     plugins_active: bool,
@@ -9260,7 +9263,7 @@ fn latest_managed_session() -> Result<ManagedSessionSummary, Box<dyn std::error:
     })
 }
 
-fn load_session_reference(
+pub(crate) fn load_session_reference(
     reference: &str,
 ) -> Result<(SessionHandle, Session), Box<dyn std::error::Error>> {
     load_session_reference_excluding(reference, None)
@@ -12166,7 +12169,7 @@ struct InternalPromptProgressShared {
 }
 
 #[derive(Debug, Clone)]
-struct InternalPromptProgressReporter {
+pub struct InternalPromptProgressReporter {
     shared: Arc<InternalPromptProgressShared>,
 }
 
@@ -12469,7 +12472,7 @@ fn describe_tool_progress(name: &str, input: &str) -> String {
 
 #[allow(clippy::needless_pass_by_value)]
 #[allow(clippy::too_many_arguments)]
-fn build_runtime(
+pub fn build_runtime(
     session: Session,
     session_id: &str,
     model: String,
@@ -12672,7 +12675,7 @@ impl runtime::PermissionPrompter for CliPermissionPrompter {
 // `detect_provider_kind(&model)`. The struct name is kept to avoid
 // churning `BuiltRuntime` and every Deref/DerefMut site that references
 // it. See ROADMAP #29 for the provider-dispatch routing fix.
-struct AnthropicRuntimeClient {
+pub struct AnthropicRuntimeClient {
     runtime: tokio::runtime::Runtime,
     client: ApiProviderClient,
     session_id: String,
@@ -14010,7 +14013,7 @@ fn prompt_cache_record_to_runtime_event(
     })
 }
 
-struct CliToolExecutor {
+pub struct CliToolExecutor {
     renderer: TerminalRenderer,
     emit_output: bool,
     allowed_tools: Option<AllowedToolSet>,
