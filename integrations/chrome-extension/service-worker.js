@@ -51,6 +51,17 @@ async function handleCommand(command) {
   }
 }
 
+// broadcastHide — rouratui isn't driving anything right now; clear any cursor
+// still fading out from a moment ago so the page never looks "controlled"
+// while nothing is connected. Tabs without the content script (chrome://,
+// the Web Store, etc.) reject the message — that's expected, ignore it.
+async function broadcastHide() {
+  const tabs = await chrome.tabs.query({});
+  for (const tab of tabs) {
+    if (tab.id != null) chrome.tabs.sendMessage(tab.id, { type: "hide" }).catch(() => undefined);
+  }
+}
+
 function connectNativeHost() {
   if (nativePort) return;
   try {
@@ -62,6 +73,7 @@ function connectNativeHost() {
     });
     nativePort.onDisconnect.addListener(() => {
       nativePort = undefined;
+      broadcastHide(); // rouratui just disconnected — don't leave a stray cursor on screen
       setTimeout(connectNativeHost, 1000);
     });
   } catch (error) {
