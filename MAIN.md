@@ -70,6 +70,13 @@ not to bypass review or grant itself unrestricted authority.
 - Treat `MAIN.md` as the shared training context. When a workflow is proven,
   record it here and add a focused Rouratui test or playbook before release.
 - Background automation must not steal keyboard or mouse focus from the user.
+- When factual or current information is requested, choose the best approved
+  source automatically: web search, pages, SSH, APIs, local files, logs, or
+  other tools. The user cares about correct, evidenced information, not which
+  retrieval mechanism is used.
+- Do not ask permission merely to gather information. Ask only when a tool is
+  blocked by the active permission mode or the action would change external
+  state, expose sensitive data, or create meaningful risk.
 - Destructive, external, credential-changing, or production-impacting actions
   require an explicit approval step and a recoverable plan.
 

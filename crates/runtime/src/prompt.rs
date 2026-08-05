@@ -216,6 +216,7 @@ impl SystemPromptBuilder {
         }
         sections.push(get_simple_system_section());
         sections.push(get_simple_doing_tasks_section());
+        sections.push(get_evidence_first_section());
         sections.push(get_actions_section());
         sections.push(SYSTEM_PROMPT_DYNAMIC_BOUNDARY.to_string());
         sections.push(self.environment_section());
@@ -752,6 +753,19 @@ fn get_simple_doing_tasks_section() -> String {
     ]);
 
     std::iter::once("# Doing tasks".to_string())
+        .chain(items)
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+fn get_evidence_first_section() -> String {
+    let items = prepend_bullets(vec![
+        "When the user wants factual, current, or otherwise verifiable information, choose the best available approved source automatically: web search, web pages, SSH inspection, APIs, local files, logs, or other tools. Do not ask permission merely to gather information.".to_string(),
+        "Optimize for correctness and evidence, not for avoiding a particular tool. Cross-check unstable or high-impact facts when practical, and distinguish observed facts from inference.".to_string(),
+        "Ask for approval only when the selected tool is blocked by the active permission mode or the action would change external state, expose sensitive data, or create meaningful risk.".to_string(),
+    ]);
+
+    std::iter::once("# Evidence-first information gathering".to_string())
         .chain(items)
         .collect::<Vec<_>>()
         .join("\n")
@@ -1572,6 +1586,14 @@ mod tests {
         assert!(rendered.contains("# Project instructions"));
         assert!(rendered.contains("scope: /tmp/project"));
         assert!(rendered.contains("Project rules"));
+    }
+
+    #[test]
+    fn includes_evidence_first_information_gathering_guidance() {
+        let rendered = SystemPromptBuilder::new().render();
+        assert!(rendered.contains("# Evidence-first information gathering"));
+        assert!(rendered.contains("Do not ask permission merely to gather information"));
+        assert!(rendered.contains("web search, web pages, SSH inspection, APIs"));
     }
 
     #[test]
