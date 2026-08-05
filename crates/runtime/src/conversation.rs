@@ -90,6 +90,7 @@ impl std::error::Error for ToolError {}
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeError {
     message: String,
+    interrupted: bool,
 }
 
 impl RuntimeError {
@@ -97,7 +98,25 @@ impl RuntimeError {
     pub fn new(message: impl Into<String>) -> Self {
         Self {
             message: message.into(),
+            interrupted: false,
         }
+    }
+
+    /// The user requested this turn stop (Esc/Ctrl+C in the TUI) — distinct
+    /// from a real failure. Callers use `is_interrupted` to skip showing an
+    /// error banner: whatever content already streamed to the transcript
+    /// stays exactly as it was, with no "Error" message appended.
+    #[must_use]
+    pub fn interrupted() -> Self {
+        Self {
+            message: "turn interrupted by user".to_string(),
+            interrupted: true,
+        }
+    }
+
+    #[must_use]
+    pub fn is_interrupted(&self) -> bool {
+        self.interrupted
     }
 }
 
@@ -140,6 +159,7 @@ pub struct ConversationRuntime<C, T> {
     hook_abort_signal: HookAbortSignal,
     hook_progress_reporter: Option<Box<dyn HookProgressReporter>>,
     session_tracer: Option<SessionTracer>,
+    cancel_signal: crate::cancel::TurnCancelSignal,
 }
 
 impl<C, T> ConversationRuntime<C, T>
@@ -189,6 +209,7 @@ where
             hook_abort_signal: HookAbortSignal::default(),
             hook_progress_reporter: None,
             session_tracer: None,
+            cancel_signal: crate::cancel::TurnCancelSignal::new(),
         }
     }
 
@@ -215,6 +236,25 @@ where
     pub fn with_hook_abort_signal(mut self, hook_abort_signal: HookAbortSignal) -> Self {
         self.hook_abort_signal = hook_abort_signal;
         self
+    }
+
+    /// Injects a `TurnCancelSignal` the caller already holds a clone of, so
+    /// the SAME underlying flag can be shared with the API client (checked
+    /// mid-stream) and an external trigger (e.g. the TUI's Esc/Ctrl+C
+    /// handler) — without this, a fresh, unreachable signal created by
+    /// `new_with_features` would never be set from outside.
+    #[must_use]
+    pub fn with_cancel_signal(mut self, cancel_signal: crate::cancel::TurnCancelSignal) -> Self {
+        self.cancel_signal = cancel_signal;
+        self
+    }
+
+    /// A clone of this runtime's cancellation signal — call `.cancel()` on
+    /// it from anywhere (a different thread) to stop the in-flight or next
+    /// `run_turn` call as soon as it next checks.
+    #[must_use]
+    pub fn cancel_signal(&self) -> crate::cancel::TurnCancelSignal {
+        self.cancel_signal.clone()
     }
 
     #[must_use]
@@ -328,6 +368,10 @@ where
         mut prompter: Option<&mut dyn PermissionPrompter>,
     ) -> Result<TurnSummary, RuntimeError> {
         let user_input = user_input.into();
+        // Fresh per turn — a stale "cancelled" flag left over from a
+        // previously interrupted turn must never immediately kill the next
+        // one the user starts.
+        self.cancel_signal.reset();
 
         // ROADMAP #38: Session-health canary - probe if context was compacted
         if self.session.compaction.is_some() {
@@ -357,6 +401,17 @@ where
                 let error = RuntimeError::new(
                     "conversation loop exceeded the maximum number of iterations",
                 );
+                self.record_turn_failed(iterations, &error);
+                return Err(error);
+            }
+            // Catches an interrupt that landed between iterations (e.g.
+            // right after a tool finished, before the next model call
+            // starts) — mid-stream interrupts are caught by the API
+            // client's own check inside its streaming loop, which surfaces
+            // here as an `Err(RuntimeError::interrupted())` from
+            // `self.api_client.stream(request)` below.
+            if self.cancel_signal.is_cancelled() {
+                let error = RuntimeError::interrupted();
                 self.record_turn_failed(iterations, &error);
                 return Err(error);
             }
