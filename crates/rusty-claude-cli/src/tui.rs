@@ -51,18 +51,25 @@ pub enum TurnEvent {
     ToolsFinished,
     ApprovalRequested {
         tool_name: String,
+        /// One plain-English sentence describing what the tool call would
+        /// do — already humanized by the caller (main.rs), not raw JSON.
         detail: String,
-        required_mode: String,
-        reason: Option<String>,
-        response: mpsc::SyncSender<bool>,
+        response: mpsc::SyncSender<ApprovalDecision>,
     },
+}
+
+/// A y/n/a answer to an approval card. `AllowAlways` means "and don't ask
+/// about this exact action again this session" (#RTUI-REMEMBER-APPROVAL).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ApprovalDecision {
+    Allow,
+    AllowAlways,
+    Deny,
 }
 
 struct ApprovalCard {
     tool_name: String,
     detail: String,
-    required_mode: String,
-    reason: Option<String>,
 }
 
 pub struct TuiConfig {
@@ -200,7 +207,10 @@ impl App<'_> {
         }
     }
 
-    fn handle_turn_event(&mut self, event: TurnEvent) -> Option<mpsc::SyncSender<bool>> {
+    fn handle_turn_event(
+        &mut self,
+        event: TurnEvent,
+    ) -> Option<mpsc::SyncSender<ApprovalDecision>> {
         match event {
             TurnEvent::TextDelta(delta) => self.append_stream_delta(&delta),
             TurnEvent::ToolCall { name, detail } => {
@@ -225,17 +235,10 @@ impl App<'_> {
             TurnEvent::ApprovalRequested {
                 tool_name,
                 detail,
-                required_mode,
-                reason,
                 response,
             } => {
                 self.status = format!("approval required · {tool_name}");
-                self.approval = Some(ApprovalCard {
-                    tool_name,
-                    detail,
-                    required_mode,
-                    reason,
-                });
+                self.approval = Some(ApprovalCard { tool_name, detail });
                 return Some(response);
             }
         }
@@ -281,6 +284,15 @@ impl App<'_> {
     }
 }
 
+/// The branch field outside a git repo (or when detection just fails) reads
+/// "unknown" — not a placeholder waiting to resolve, a permanent "not
+/// applicable" for this workspace. Hide the field entirely rather than show
+/// a value that looks broken.
+fn known_branch<'b>(app: &'b App<'_>) -> Option<&'b str> {
+    let branch = app.config.branch.trim();
+    (!branch.is_empty() && branch != "unknown").then_some(branch)
+}
+
 fn composer_block(busy: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
@@ -305,6 +317,20 @@ where
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
                 app.composer_focused = mouse.row >= terminal.size()?.height.saturating_sub(6);
             }
+            // #RTUI-MOUSE-SCROLL: the wheel/trackpad was never wired to
+            // scrolling at all — every mouse event past the focus check was
+            // silently swallowed, so PageUp/PageDown were the only way to
+            // scroll, which most people don't reach for first.
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    app.scroll = app.scroll.saturating_sub(3);
+                    app.user_scrolled = true;
+                }
+                MouseEventKind::ScrollDown => {
+                    app.scroll = app.scroll.saturating_add(3);
+                }
+                _ => {}
+            }
             continue;
         }
         let Event::Key(key) = event else { continue };
@@ -328,8 +354,8 @@ where
                             // silently dropped from the moment you hit enter
                             // until the turn finished.
                             if event::poll(Duration::from_millis(0))? {
-                                if let Event::Key(key) = event::read()? {
-                                    if key.kind == event::KeyEventKind::Press {
+                                match event::read()? {
+                                    Event::Key(key) if key.kind == event::KeyEventKind::Press => {
                                         match key.code {
                                             KeyCode::PageUp => {
                                                 app.scroll = app.scroll.saturating_sub(5);
@@ -343,30 +369,47 @@ where
                                             _ => {}
                                         }
                                     }
+                                    Event::Mouse(mouse) => match mouse.kind {
+                                        MouseEventKind::ScrollUp => {
+                                            app.scroll = app.scroll.saturating_sub(3);
+                                            app.user_scrolled = true;
+                                            changed = true;
+                                        }
+                                        MouseEventKind::ScrollDown => {
+                                            app.scroll = app.scroll.saturating_add(3);
+                                            changed = true;
+                                        }
+                                        _ => {}
+                                    },
+                                    _ => {}
                                 }
                             }
                             if let Ok(event) = turn_rx.recv_timeout(Duration::from_millis(50)) {
                                 if let Some(response) = app.handle_turn_event(event) {
                                     terminal.draw(|frame| draw(frame, &mut app))?;
-                                    let allowed = read_approval_decision()?;
-                                    let _ = response.send(allowed);
+                                    let decision = read_approval_decision()?;
+                                    let _ = response.send(decision);
                                     let tool_name = app.approval.as_ref().map_or_else(
                                         || "tool".to_string(),
                                         |approval| approval.tool_name.clone(),
                                     );
+                                    let outcome_label = match decision {
+                                        ApprovalDecision::Allow => "allowed",
+                                        ApprovalDecision::AllowAlways => {
+                                            "allowed — won't ask again"
+                                        }
+                                        ApprovalDecision::Deny => "denied",
+                                    };
                                     app.messages.push(ChatMessage {
                                         label: "Approval".to_string(),
-                                        text: format!(
-                                            "{tool_name} · {}",
-                                            if allowed { "allowed" } else { "denied" }
-                                        ),
+                                        text: format!("{tool_name} · {outcome_label}"),
                                         role: MessageRole::System,
                                     });
                                     app.approval = None;
-                                    app.status = if allowed {
-                                        format!("running {tool_name}")
-                                    } else {
+                                    app.status = if decision == ApprovalDecision::Deny {
                                         format!("{tool_name} denied")
+                                    } else {
+                                        format!("running {tool_name}")
                                     };
                                 }
                                 changed = true;
@@ -406,7 +449,7 @@ where
     Ok(())
 }
 
-fn read_approval_decision() -> io::Result<bool> {
+fn read_approval_decision() -> io::Result<ApprovalDecision> {
     loop {
         if !event::poll(Duration::from_millis(250))? {
             continue;
@@ -418,8 +461,13 @@ fn read_approval_decision() -> io::Result<bool> {
             continue;
         }
         match key.code {
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => return Ok(true),
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => return Ok(false),
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                return Ok(ApprovalDecision::Allow)
+            }
+            KeyCode::Char('a') | KeyCode::Char('A') => return Ok(ApprovalDecision::AllowAlways),
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                return Ok(ApprovalDecision::Deny)
+            }
             _ => {}
         }
     }
@@ -466,30 +514,29 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         &mut scrollbar_state,
     );
     if let Some(approval) = &app.approval {
-        let reason = approval
-            .reason
-            .as_deref()
-            .unwrap_or("No additional reason provided");
+        // #RTUI-HUMANE-APPROVAL: one plain sentence (built in main.rs from
+        // the tool name + its actual input) and three keys — not a tool
+        // name, a permission-mode label, a reason string, and a raw JSON
+        // blob stacked on top of each other.
         let card = Paragraph::new(vec![
+            Line::from(Span::styled(
+                approval.detail.clone(),
+                Style::default().fg(TEXT),
+            )),
             Line::from(vec![
-                Span::styled("Tool  ", Style::default().fg(FAINT)),
-                Span::styled(approval.tool_name.clone(), Style::default().fg(TEXT)),
-                Span::styled(
-                    format!("  · requires {}", approval.required_mode),
-                    Style::default().fg(FAINT),
-                ),
-            ]),
-            Line::from(approval.detail.clone()),
-            Line::from(vec![
-                Span::styled(reason.to_string(), Style::default().fg(FAINT)),
-                Span::styled("    Y/Enter allow · N/Esc deny", Style::default().fg(CORAL)),
+                Span::styled("y", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+                Span::styled(" allow    ", Style::default().fg(FAINT)),
+                Span::styled("n", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+                Span::styled(" skip    ", Style::default().fg(FAINT)),
+                Span::styled("a", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
+                Span::styled(" always allow this", Style::default().fg(FAINT)),
             ]),
         ])
         .block(
             Block::default()
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(CORAL))
-                .title(" Approval required ")
+                .title(" Approve? ")
                 .padding(Padding::horizontal(1)),
         )
         .wrap(Wrap { trim: true });
@@ -533,21 +580,26 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     // below the turn it's animating for (see `App::transcript`). This bar
     // names the model doing the work, not a second, disconnected busy
     // indicator.
-    let footer = Line::from(vec![
-        Span::styled(
-            format!(" {} ", app.config.agent),
-            Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
-        ),
-        Span::styled(" · ", Style::default().fg(FAINT)),
-        Span::styled(
-            app.config.permission_mode.clone(),
-            Style::default().fg(FAINT),
-        ),
-        Span::styled(" · ", Style::default().fg(FAINT)),
-        Span::styled(app.config.branch.clone(), Style::default().fg(FAINT)),
-        Span::styled(" · ", Style::default().fg(FAINT)),
-        Span::styled(app.status.clone(), Style::default().fg(CORAL)),
-    ]);
+    let footer = Line::from({
+        let mut spans = vec![
+            Span::styled(
+                format!(" {} ", app.config.agent),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(" · ", Style::default().fg(FAINT)),
+            Span::styled(
+                app.config.permission_mode.clone(),
+                Style::default().fg(FAINT),
+            ),
+        ];
+        if let Some(branch) = known_branch(app) {
+            spans.push(Span::styled(" · ", Style::default().fg(FAINT)));
+            spans.push(Span::styled(branch.to_string(), Style::default().fg(FAINT)));
+        }
+        spans.push(Span::styled(" · ", Style::default().fg(FAINT)));
+        spans.push(Span::styled(app.status.clone(), Style::default().fg(CORAL)));
+        spans
+    });
     frame.render_widget(Paragraph::new(footer), areas[3]);
 }
 
@@ -568,7 +620,7 @@ fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &
                 Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                format!("  v{}", app.config.version),
+                format!("  {}", app.config.version),
                 Style::default().fg(FAINT),
             ),
             Span::styled("   local workspace agent", Style::default().fg(FAINT)),
@@ -598,22 +650,34 @@ fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &
             ),
             Span::styled(directory, Style::default().fg(TEXT)),
         ]),
-        Line::from(vec![
-            Span::styled(
-                "MODE  ",
-                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(
-                app.config.permission_mode.clone(),
-                Style::default().fg(TEXT),
-            ),
-            Span::styled(
-                "   BRANCH  ",
-                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
-            ),
-            Span::styled(app.config.branch.clone(), Style::default().fg(TEXT)),
-            Span::styled("   SESSION ACTIVE", Style::default().fg(CORAL)),
-        ]),
+        Line::from({
+            let mut spans = vec![
+                Span::styled(
+                    "MODE  ",
+                    Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    app.config.permission_mode.clone(),
+                    Style::default().fg(TEXT),
+                ),
+            ];
+            // #RTUI-HIDE-UNKNOWN-BRANCH: outside a git repo (or when branch
+            // detection just fails), showing the literal word "unknown"
+            // reads like something broken or still loading. There's nothing
+            // to show, so don't show the field at all.
+            if let Some(branch) = known_branch(app) {
+                spans.push(Span::styled(
+                    "   BRANCH  ",
+                    Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+                ));
+                spans.push(Span::styled(branch.to_string(), Style::default().fg(TEXT)));
+            }
+            spans.push(Span::styled(
+                "   SESSION ACTIVE",
+                Style::default().fg(CORAL),
+            ));
+            spans
+        }),
         Line::from(Span::styled(
             "Enter send  ·  Shift-Enter/Ctrl-J newline  ·  PageUp/PageDown scroll  ·  Ctrl-C exit",
             Style::default().fg(FAINT),
@@ -683,7 +747,7 @@ impl Drop for TerminalSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_quit, is_submit, App, MessageRole, TuiConfig, TurnEvent};
+    use super::{is_quit, is_submit, App, ApprovalDecision, MessageRole, TuiConfig, TurnEvent};
     use ratatui_crossterm::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::mpsc;
 
@@ -757,13 +821,14 @@ mod tests {
         let (response, decision) = mpsc::sync_channel(1);
         let returned = app.handle_turn_event(TurnEvent::ApprovalRequested {
             tool_name: "shell".to_string(),
-            detail: "git push".to_string(),
-            required_mode: "danger-full-access".to_string(),
-            reason: Some("network access".to_string()),
+            detail: "Run: git push".to_string(),
             response,
         });
-        returned.expect("approval response").send(false).unwrap();
-        assert!(!decision.recv().unwrap());
+        returned
+            .expect("approval response")
+            .send(ApprovalDecision::Deny)
+            .unwrap();
+        assert_eq!(decision.recv().unwrap(), ApprovalDecision::Deny);
         assert!(app.approval.is_some());
         assert_eq!(app.status, "approval required · shell");
     }
