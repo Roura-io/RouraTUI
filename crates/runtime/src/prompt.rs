@@ -657,13 +657,40 @@ pub fn load_system_prompt_with_context(
     let config = ConfigLoader::default_for(&cwd).load()?;
     let project_context =
         discover_with_git_and_rules_import(&cwd, current_date.into(), config.rules_import())?;
-    let sections = SystemPromptBuilder::new()
+    let mut builder = SystemPromptBuilder::new()
         .with_os(os_name, os_version)
         .with_model_family(model_family)
-        .with_project_context(project_context.clone())
-        .with_runtime_config(config)
-        .build();
+        .with_project_context(project_context.clone());
+    if let Some(section) = render_agent_git_identity_section(&config) {
+        builder = builder.append_section(section);
+    }
+    let sections = builder.with_runtime_config(config).build();
     Ok((sections, project_context))
+}
+
+/// Renders guidance for the optional `agentGitIdentity` setting
+/// (`{"name": ..., "email": ...}`, any discovered settings file — see
+/// `bash::agent_git_committer_env`, which applies it as `GIT_COMMITTER_*`
+/// on every tool-run command). `GIT_COMMITTER_*` is set unconditionally by
+/// the runtime and needs no model action; `GIT_AUTHOR_*` is deliberately
+/// left to the model's judgment per call, since a rebase/cherry-pick must
+/// preserve the ORIGINAL author of the commit being replayed, while a
+/// brand-new commit the agent is creating from scratch should carry this
+/// identity as its author too — only the model, reading the actual git
+/// subcommand and intent, can tell those two cases apart.
+fn render_agent_git_identity_section(config: &RuntimeConfig) -> Option<String> {
+    let identity = config.get("agentGitIdentity")?.as_object()?;
+    let name = identity.get("name")?.as_str()?;
+    let email = identity.get("email")?.as_str()?;
+    Some(format!(
+        "# Agent git identity\n\
+         - This environment already sets GIT_COMMITTER_NAME/EMAIL to \"{name}\" / \"{email}\" \
+         on every command you run — no action needed for that.\n\
+         - For a brand-new commit you are creating (not replaying someone else's — a rebase, \
+         cherry-pick, or amend must keep the ORIGINAL author), also pass \
+         --author=\"{name} <{email}>\" so the author field matches too.\n\
+         - Never use the human operator's own GitHub identity as the author of agent-made commits."
+    ))
 }
 
 fn render_config_section(config: &RuntimeConfig) -> String {
@@ -1239,6 +1266,89 @@ mod tests {
 
         assert!(prompt.contains("Project rules"));
         assert!(prompt.contains("permissionMode"));
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_system_prompt_surfaces_configured_agent_git_identity() {
+        let root = temp_dir();
+        fs::create_dir_all(root.join(".claw")).expect("claw dir");
+        fs::write(
+            root.join(".claw").join("settings.json"),
+            r#"{"agentGitIdentity":{"name":"roura-ai","email":"roura-ai@users.noreply.github.com"}}"#,
+        )
+        .expect("write settings");
+
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let previous = std::env::current_dir().expect("cwd");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &root);
+        std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_current_dir(&root).expect("change cwd");
+        let prompt = super::load_system_prompt(
+            &root,
+            "2026-03-31",
+            "linux",
+            "6.8",
+            ModelFamilyIdentity::Claude,
+        )
+        .expect("system prompt should load")
+        .join("\n\n");
+        std::env::set_current_dir(previous).expect("restore cwd");
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+
+        assert!(prompt.contains("roura-ai"));
+        assert!(prompt.contains("roura-ai@users.noreply.github.com"));
+        assert!(prompt.contains("--author="));
+        fs::remove_dir_all(root).expect("cleanup temp dir");
+    }
+
+    #[test]
+    fn load_system_prompt_omits_agent_git_identity_section_when_unconfigured() {
+        let root = temp_dir();
+        fs::create_dir_all(&root).expect("root dir");
+
+        let _guard = env_lock();
+        ensure_valid_cwd();
+        let previous = std::env::current_dir().expect("cwd");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &root);
+        std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_current_dir(&root).expect("change cwd");
+        let prompt = super::load_system_prompt(
+            &root,
+            "2026-03-31",
+            "linux",
+            "6.8",
+            ModelFamilyIdentity::Claude,
+        )
+        .expect("system prompt should load")
+        .join("\n\n");
+        std::env::set_current_dir(previous).expect("restore cwd");
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+
+        assert!(!prompt.contains("Agent git identity"));
         fs::remove_dir_all(root).expect("cleanup temp dir");
     }
 

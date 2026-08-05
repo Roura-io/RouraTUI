@@ -68,6 +68,11 @@ pub struct BashCommandOutput {
     pub sandbox_status: Option<SandboxStatus>,
 }
 
+/// Hard ceiling applied when a tool call omits `timeout` entirely
+/// (#RTUI-NO-INTERACTIVE-HANG) — generous enough for a real build, finite
+/// enough that nothing can freeze the TUI forever.
+const NO_TIMEOUT_SPECIFIED_CEILING_MS: u64 = 10 * 60 * 1000;
+
 /// Executes a shell command with the requested sandbox settings.
 pub fn execute_bash(input: BashCommandInput) -> io::Result<BashCommandOutput> {
     let cwd = env::current_dir()?;
@@ -176,15 +181,18 @@ async fn execute_bash_async(
 
     let mut command = prepare_tokio_command(&input.command, &cwd, &sandbox_status, true);
 
-    let output_result = if let Some(timeout_ms) = input.timeout {
+    // #RTUI-NO-INTERACTIVE-HANG: a caller that omits `timeout` used to run
+    // fully unbounded — one hung subprocess (an interactive prompt that
+    // slipped past the env-var guards above, a network call with no
+    // timeout of its own, ...) froze the TUI forever with no way out short
+    // of killing the process. Every call now gets a ceiling.
+    let timeout_ms = input.timeout.unwrap_or(NO_TIMEOUT_SPECIFIED_CEILING_MS);
+    let output_result =
         if let Ok(result) = timeout(Duration::from_millis(timeout_ms), command.output()).await {
             (result?, false)
         } else {
             return Ok(timeout_output(&input, timeout_ms, sandbox_status));
-        }
-    } else {
-        (command.output().await?, false)
-    };
+        };
 
     let (output, interrupted) = output_result;
     let stdout = truncate_output(&String::from_utf8_lossy(&output.stdout));
@@ -293,6 +301,75 @@ fn sandbox_status_for_input(input: &BashCommandInput, cwd: &std::path::Path) -> 
     resolve_sandbox_status_for_request(&request, cwd)
 }
 
+/// Env vars that make git/ssh fail fast instead of hanging on an interactive
+/// prompt (#RTUI-NO-INTERACTIVE-HANG). A tool-spawned subprocess shares the
+/// TUI's controlling terminal, which is in raw mode — a credential prompt
+/// reads from `/dev/tty` directly (bypassing stdin, so `Stdio::null()` alone
+/// does not help) and blocks forever because the terminal's keystrokes are
+/// being routed to the TUI's own input handler, not to the child process.
+/// `GIT_TERMINAL_PROMPT=0` is git's documented switch to refuse ANY
+/// terminal prompt outright; the rest are defense in depth for tools that
+/// shell out to git/ssh without going through these exact wrappers.
+const NO_INTERACTIVE_PROMPT_ENV: &[(&str, &str)] = &[
+    ("GIT_TERMINAL_PROMPT", "0"),
+    ("GIT_ASKPASS", "/usr/bin/false"),
+    ("SSH_ASKPASS", "/usr/bin/false"),
+    ("SSH_ASKPASS_REQUIRE", "force"),
+    (
+        "GIT_SSH_COMMAND",
+        "ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new",
+    ),
+];
+
+fn apply_no_interactive_prompt_env<C: NoInteractivePromptTarget>(command: &mut C) {
+    for (key, value) in NO_INTERACTIVE_PROMPT_ENV {
+        command.set_env(key, value);
+    }
+}
+
+trait NoInteractivePromptTarget {
+    fn set_env(&mut self, key: &str, value: &str);
+}
+
+impl NoInteractivePromptTarget for Command {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+}
+
+impl NoInteractivePromptTarget for TokioCommand {
+    fn set_env(&mut self, key: &str, value: &str) {
+        self.env(key, value);
+    }
+}
+
+/// Reads an optional `agentGitIdentity: {"name": ..., "email": ...}` from
+/// the user's own settings (any `ConfigLoader`-discovered file — never
+/// hardcoded, since this product ships to more than one person's machine).
+/// Applied as `GIT_COMMITTER_*`, never `GIT_AUTHOR_*`: committer identity is
+/// safe to stamp unconditionally (it always reflects who actually ran the
+/// git command — the agent), whereas author identity must be preserved
+/// during a rebase/cherry-pick replay of someone else's commits, which only
+/// the agent — reading the actual git subcommand and intent — can judge
+/// correctly per call (see the system-prompt guidance this pairs with).
+fn agent_git_committer_env(cwd: &std::path::Path) -> Option<(String, String)> {
+    let config = ConfigLoader::default_for(cwd).load().ok()?;
+    let identity = config.get("agentGitIdentity")?.as_object()?;
+    let name = identity.get("name")?.as_str()?.to_string();
+    let email = identity.get("email")?.as_str()?.to_string();
+    Some((name, email))
+}
+
+fn apply_agent_git_committer_env<C: NoInteractivePromptTarget>(
+    command: &mut C,
+    cwd: &std::path::Path,
+) {
+    if let Some((name, email)) = agent_git_committer_env(cwd) {
+        command.set_env("GIT_COMMITTER_NAME", &name);
+        command.set_env("GIT_COMMITTER_EMAIL", &email);
+    }
+}
+
 fn prepare_command(
     command: &str,
     cwd: &std::path::Path,
@@ -308,6 +385,8 @@ fn prepare_command(
         prepared.args(launcher.args);
         prepared.current_dir(cwd);
         prepared.envs(launcher.env);
+        apply_no_interactive_prompt_env(&mut prepared);
+        apply_agent_git_committer_env(&mut prepared, cwd);
         return prepared;
     }
 
@@ -317,6 +396,8 @@ fn prepare_command(
         prepared.env("HOME", cwd.join(".sandbox-home"));
         prepared.env("TMPDIR", cwd.join(".sandbox-tmp"));
     }
+    apply_no_interactive_prompt_env(&mut prepared);
+    apply_agent_git_committer_env(&mut prepared, cwd);
     prepared
 }
 
@@ -348,6 +429,8 @@ fn prepare_tokio_command(
 
     prepared.current_dir(cwd);
     prepared.stdin(Stdio::null());
+    apply_no_interactive_prompt_env(&mut prepared);
+    apply_agent_git_committer_env(&mut prepared, cwd);
     prepared
 }
 
@@ -379,6 +462,90 @@ mod tests {
         assert_eq!(output.stdout, "hello");
         assert!(!output.interrupted);
         assert!(output.sandbox_status.is_some());
+    }
+
+    /// #RTUI-NO-INTERACTIVE-HANG: proves the env vars actually reach the
+    /// spawned shell, not just that the wiring compiles — a `git clone`
+    /// over https with no credentials must fail fast instead of blocking
+    /// on a `/dev/tty` prompt (see `apply_no_interactive_prompt_env`).
+    #[test]
+    fn sets_non_interactive_git_and_ssh_env() {
+        let output = execute_bash(BashCommandInput {
+            command: String::from(
+                "printf '%s|%s|%s|%s|%s' \"$GIT_TERMINAL_PROMPT\" \"$GIT_ASKPASS\" \"$SSH_ASKPASS\" \"$SSH_ASKPASS_REQUIRE\" \"$GIT_SSH_COMMAND\"",
+            ),
+            timeout: Some(1_000),
+            description: None,
+            run_in_background: Some(false),
+            dangerously_disable_sandbox: Some(false),
+            namespace_restrictions: Some(false),
+            isolate_network: Some(false),
+            filesystem_mode: Some(FilesystemIsolationMode::WorkspaceOnly),
+            allowed_mounts: None,
+        })
+        .expect("bash command should execute");
+
+        assert_eq!(
+            output.stdout,
+            "0|/usr/bin/false|/usr/bin/false|force|ssh -o BatchMode=yes -o ConnectTimeout=15 -o StrictHostKeyChecking=accept-new"
+        );
+    }
+
+    /// Proves the configured `agentGitIdentity` setting actually reaches
+    /// the spawned shell as `GIT_COMMITTER_*` — the counterpart to
+    /// `prompt::load_system_prompt_surfaces_configured_agent_git_identity`,
+    /// which checks the model gets told about it.
+    #[test]
+    fn applies_configured_agent_git_identity_as_committer_env() {
+        let _guard = crate::test_env_lock();
+        let nanos = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("time should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("runtime-bash-identity-{nanos}"));
+        std::fs::create_dir_all(root.join(".claw")).expect("claw dir");
+        std::fs::write(
+            root.join(".claw").join("settings.json"),
+            r#"{"agentGitIdentity":{"name":"roura-ai","email":"roura-ai@users.noreply.github.com"}}"#,
+        )
+        .expect("write settings");
+
+        let previous = std::env::current_dir().expect("cwd");
+        let original_home = std::env::var("HOME").ok();
+        let original_claw_home = std::env::var("CLAW_CONFIG_HOME").ok();
+        std::env::set_var("HOME", &root);
+        std::env::set_var("CLAW_CONFIG_HOME", root.join("missing-home"));
+        std::env::set_current_dir(&root).expect("change cwd");
+
+        let output = execute_bash(BashCommandInput {
+            command: String::from(
+                "printf '%s|%s' \"$GIT_COMMITTER_NAME\" \"$GIT_COMMITTER_EMAIL\"",
+            ),
+            timeout: Some(1_000),
+            description: None,
+            run_in_background: Some(false),
+            dangerously_disable_sandbox: Some(false),
+            namespace_restrictions: Some(false),
+            isolate_network: Some(false),
+            filesystem_mode: Some(FilesystemIsolationMode::WorkspaceOnly),
+            allowed_mounts: None,
+        });
+
+        std::env::set_current_dir(previous).expect("restore cwd");
+        if let Some(value) = original_home {
+            std::env::set_var("HOME", value);
+        } else {
+            std::env::remove_var("HOME");
+        }
+        if let Some(value) = original_claw_home {
+            std::env::set_var("CLAW_CONFIG_HOME", value);
+        } else {
+            std::env::remove_var("CLAW_CONFIG_HOME");
+        }
+        std::fs::remove_dir_all(&root).ok();
+
+        let output = output.expect("bash command should execute");
+        assert_eq!(output.stdout, "roura-ai|roura-ai@users.noreply.github.com");
     }
 
     #[test]
