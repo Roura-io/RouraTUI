@@ -134,3 +134,66 @@ Alpha.5 points the updater and product metadata at the canonical
 - Adds a Claude-inspired coral visual treatment, transcript viewport, agent identity, permission mode, branch, and activity footer.
 - Keeps responses in the scrolling transcript while preserving composer position and terminal cleanup on exit.
 - Stages disabled Chrome-control foundations for later prereleases; no browser-control capability is installed or enabled in this release.
+## 2.0.0-alpha.13
+
+- Adds explicit `tabId` targeting to Chrome browser commands so RouraTUI can
+  operate on a background tab instead of whichever tab happens to be active.
+- Background-tab operations remain auditable and approval-gated; visible cursor
+  animation is shown whenever the target tab is active and visible.
+## 2.0.0-alpha.14
+
+- Adds explicit `focus: true` support for browser commands targeting a tab.
+- Background automation remains the default; callers can opt in to focusing
+  the target window/tab when visible cursor feedback is desired.
+## 2.0.0-alpha.15
+
+- Moves the orange composer caret into the input field for a familiar prompt experience.
+- Adds a live model-state indicator with a lightweight thinking glyph.
+- Refreshes the header with product/version, model state, permissions, branch, and session context.
+## 2.0.0-alpha.16
+
+- Adds a real animated braille spinner while the model is generating.
+- Moves the active loading state to the footer beneath the composer.
+- Keeps the model identity in the header and avoids duplicating it in the loading row.
+## 2.0.0-alpha.17
+
+- Adds a clearly visible composer caret when the input is focused and empty.
+- Uses a coral block caret/underline for typed input so the insertion point remains obvious.
+- Refines the composer focus treatment without changing the anchored layout.
+## 2.0.0-alpha.18
+
+- Keeps the orange `❯` prompt visible while typing.
+- Places the insertion cursor immediately beside the prompt without overlap.
+- Gives the composer a little more breathing room for the prompt and input text.
+## 2.0.0-alpha.19
+
+- Adds a small visual gap between the orange prompt and insertion caret.
+- Deselects the composer caret when clicking outside the input area.
+- Restores composer focus on keyboard input.
+## 2.0.0-alpha.20
+
+- Keeps the empty placeholder text clean instead of painting it with the block cursor.
+- Uses a clear two-space gap between the orange prompt and custom caret.
+- Retains the high-contrast cursor once text has been entered.
+## 2.0.0-alpha.21
+
+- Replaces the chunky block-like empty-field caret with a thin insertion bar.
+- Renders the prompt, spacing, and caret separately for consistent alignment.
+## 2.0.0-alpha.22
+
+- Separates the orange `❯` prompt from the actual text insertion point.
+- Adds one real blank cell before text begins.
+- Keeps the normal cursor exactly at the text start when the composer is empty.
+## 2.0.0-alpha.23
+
+- Uses the same one-cell coral block cursor in both empty and typed states.
+- Keeps the cursor aligned at the text start after the prompt gap.
+## 2.0.0-alpha.24
+
+- Removes the line-wide underline from composer text.
+- Keeps only the one-cell cursor block as the active insertion indicator.
+## 2.0.0-alpha.25
+
+- Reworks the top metadata into a boxed agent-session header.
+- Adds the active working directory to the header.
+- Organizes model, status, workspace, mode, branch, and shortcuts into clear rows.

@@ -8,7 +8,9 @@ use ratatui_core::style::{Color, Modifier, Style};
 use ratatui_core::terminal::Terminal;
 use ratatui_core::text::{Line, Span, Text};
 use ratatui_crossterm::crossterm;
-use ratatui_crossterm::crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers};
+use ratatui_crossterm::crossterm::event::{
+    self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEventKind,
+};
 use ratatui_crossterm::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
@@ -84,6 +86,7 @@ struct App<'a> {
     /// delta — auto-follow only resumes once they page back down to the
     /// bottom, or send a new message.
     user_scrolled: bool,
+    composer_focused: bool,
 }
 
 impl App<'_> {
@@ -91,7 +94,7 @@ impl App<'_> {
         let mut composer = TextArea::default();
         composer.set_placeholder_text("Ask RouraTUI anything…");
         composer.set_cursor_line_style(Style::default());
-        composer.set_cursor_style(Style::default().fg(CORAL));
+        composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         composer.set_style(Style::default().fg(TEXT));
         composer.set_placeholder_style(Style::default().fg(FAINT));
         composer.set_block(composer_block(false));
@@ -109,6 +112,7 @@ impl App<'_> {
             should_quit: false,
             approval: None,
             user_scrolled: false,
+            composer_focused: true,
         }
     }
 
@@ -134,7 +138,8 @@ impl App<'_> {
         self.composer = TextArea::default();
         self.composer.set_placeholder_text("Ask RouraTUI anything…");
         self.composer.set_cursor_line_style(Style::default());
-        self.composer.set_cursor_style(Style::default().fg(CORAL));
+        self.composer
+            .set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
         self.composer.set_style(Style::default().fg(TEXT));
         self.composer
             .set_placeholder_style(Style::default().fg(FAINT));
@@ -280,11 +285,7 @@ fn composer_block(busy: bool) -> Block<'static> {
     Block::default()
         .borders(Borders::ALL)
         .border_style(Style::default().fg(if busy { FAINT } else { CORAL }))
-        .title(Span::styled(
-            " ❯ ",
-            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
-        ))
-        .padding(Padding::horizontal(1))
+        .padding(Padding::horizontal(3))
 }
 
 pub fn run<F>(config: TuiConfig, mut perform_turn: F) -> io::Result<()>
@@ -299,9 +300,14 @@ where
         if !event::poll(Duration::from_millis(250))? {
             continue;
         }
-        let Event::Key(key) = event::read()? else {
+        let event = event::read()?;
+        if let Event::Mouse(mouse) = event {
+            if matches!(mouse.kind, MouseEventKind::Down(_)) {
+                app.composer_focused = mouse.row >= terminal.size()?.height.saturating_sub(6);
+            }
             continue;
-        };
+        }
+        let Event::Key(key) = event else { continue };
         if key.kind != event::KeyEventKind::Press {
             continue;
         }
@@ -370,9 +376,8 @@ where
                                 terminal.draw(|frame| draw(frame, &mut app))?;
                                 return Ok((terminal, app));
                             }
-                            // Keep the TUI alive at 20 FPS while the model is
-                            // thinking so the loading indicator visibly
-                            // animates even without events.
+                            // Keep the TUI alive at 20 FPS while the model is thinking so
+                            // the loading indicator visibly animates even without events.
                             let _ = changed;
                             terminal.draw(|frame| draw(frame, &mut app))?;
                         }
@@ -394,6 +399,7 @@ where
         } else if key.code == KeyCode::PageDown {
             app.scroll = app.scroll.saturating_add(5);
         } else {
+            app.composer_focused = true;
             app.composer.input(Input::from(key));
         }
     }
@@ -424,7 +430,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(6),
             Constraint::Min(5),
             Constraint::Length(5),
             Constraint::Length(1),
@@ -489,7 +495,39 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .wrap(Wrap { trim: true });
         frame.render_widget(card, areas[2]);
     } else {
+        let empty = app.composer.lines().iter().all(|line| line.is_empty());
+        app.composer
+            .set_cursor_style(if app.composer_focused && !empty {
+                Style::default().fg(Color::Black).bg(CORAL)
+            } else {
+                // The custom prompt/caret owns the empty-field cursor.
+                Style::default().fg(Color::Black).bg(Color::Black)
+            });
         frame.render_widget(&app.composer, areas[2]);
+        let caret = Paragraph::new(Line::from(Span::styled(
+            "❯",
+            Style::default().fg(CORAL).add_modifier(Modifier::BOLD),
+        )));
+        frame.render_widget(
+            caret,
+            Rect {
+                x: areas[2].x + 2,
+                y: areas[2].y + 1,
+                width: 1,
+                height: 1,
+            },
+        );
+        if empty && app.composer_focused {
+            frame.render_widget(
+                Paragraph::new(Span::styled(" ", Style::default().bg(CORAL))),
+                Rect {
+                    x: areas[2].x + 4,
+                    y: areas[2].y + 1,
+                    width: 1,
+                    height: 1,
+                },
+            );
+        }
     }
     // #RTUI-THINKING-BANNER: the spinner now lives in the transcript, right
     // below the turn it's animating for (see `App::transcript`). This bar
@@ -514,18 +552,83 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
 }
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
+    let model_state = if app.status == "ready" {
+        "ready".to_string()
+    } else {
+        "thinking".to_string()
+    };
+    let directory = std::env::current_dir()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|_| "unknown directory".to_string());
     let header = vec![
         Line::from(vec![
-            Span::styled(" ✻ rouraTUI Code ", Style::default().fg(CORAL).add_modifier(Modifier::BOLD)),
-            Span::styled(format!("v{}", app.config.version), Style::default().fg(FAINT)),
+            Span::styled("● ", Style::default().fg(CORAL)),
+            Span::styled(
+                "rouraTUI Code",
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                format!("  v{}", app.config.version),
+                Style::default().fg(FAINT),
+            ),
+            Span::styled("   local workspace agent", Style::default().fg(FAINT)),
         ]),
         Line::from(vec![
-            Span::styled(" Agent  ", Style::default().fg(FAINT)),
-            Span::styled(app.config.agent.clone(), Style::default().fg(TEXT).add_modifier(Modifier::BOLD)),
-            Span::styled("    Enter sends · Shift-Enter/Ctrl-J adds a line · PageUp/PageDown scroll · Ctrl-C exits", Style::default().fg(FAINT)),
+            Span::styled(
+                "MODEL  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                app.config.agent.clone(),
+                Style::default().fg(TEXT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                "   STATUS  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                model_state,
+                Style::default().fg(if app.status == "ready" { FAINT } else { CORAL }),
+            ),
         ]),
+        Line::from(vec![
+            Span::styled(
+                "WORKSPACE  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(directory, Style::default().fg(TEXT)),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                "MODE  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(
+                app.config.permission_mode.clone(),
+                Style::default().fg(TEXT),
+            ),
+            Span::styled(
+                "   BRANCH  ",
+                Style::default().fg(FAINT).add_modifier(Modifier::BOLD),
+            ),
+            Span::styled(app.config.branch.clone(), Style::default().fg(TEXT)),
+            Span::styled("   SESSION ACTIVE", Style::default().fg(CORAL)),
+        ]),
+        Line::from(Span::styled(
+            "Enter send  ·  Shift-Enter/Ctrl-J newline  ·  PageUp/PageDown scroll  ·  Ctrl-C exit",
+            Style::default().fg(FAINT),
+        )),
     ];
-    frame.render_widget(Paragraph::new(header), area);
+    frame.render_widget(
+        Paragraph::new(header).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(FAINT))
+                .title(" Agent session ")
+                .padding(Padding::horizontal(1)),
+        ),
+        area,
+    );
 }
 
 fn is_submit(key: KeyEvent) -> bool {

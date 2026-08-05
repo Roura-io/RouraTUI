@@ -99,7 +99,7 @@ checksum = "7f202df86484c868dbad7eaa557ef785d5c66295e41b460ef922eca0723b842c"
 
 [[package]]
 name = "api"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "criterion",
  "reqwest",
@@ -341,7 +341,7 @@ dependencies = [
 
 [[package]]
 name = "browser-bridge"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "serde_json",
 ]
@@ -483,7 +483,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 
 [[package]]
 name = "claw-analog"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "api",
  "clap",
@@ -503,7 +503,7 @@ dependencies = [
 
 [[package]]
 name = "claw-rag-service"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "axum 0.8.9",
  "blake3",
@@ -536,7 +536,7 @@ checksum = "1d07550c9036bf2ae0c684c4297d503f838287c83c53686d05370d0e139ae570"
 
 [[package]]
 name = "commands"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "plugins",
  "runtime",
@@ -559,7 +559,7 @@ dependencies = [
 
 [[package]]
 name = "compat-harness"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "commands",
  "runtime",
@@ -1760,7 +1760,7 @@ dependencies = [
 
 [[package]]
 name = "mock-anthropic-service"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "api",
  "serde_json",
@@ -1953,7 +1953,7 @@ dependencies = [
 
 [[package]]
 name = "plugins"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -2393,7 +2393,7 @@ dependencies = [
 
 [[package]]
 name = "rouratui-cli"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "api",
  "commands",
@@ -2417,7 +2417,7 @@ dependencies = [
 
 [[package]]
 name = "runtime"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "glob",
  "plugins",
@@ -2890,7 +2890,7 @@ dependencies = [
 
 [[package]]
 name = "telemetry"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "serde",
  "serde_json",
@@ -3153,7 +3153,7 @@ dependencies = [
 
 [[package]]
 name = "tools"
-version = "2.0.0-alpha.12"
+version = "2.0.0-alpha.25"
 dependencies = [
  "api",
  "aspect-core",
