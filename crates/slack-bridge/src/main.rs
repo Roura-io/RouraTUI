@@ -353,15 +353,46 @@ national broadcasts on channels like ESPN, NBC, TNT, and Fox). When identifying 
 where to watch a game, name the exact app from this list rather than the \
 underlying network name (e.g. say \"DAZN\", not \"YES Network\"). When you can \
 find a direct link into that app or its live/team page via WebSearch, include \
-it as a Slack link; do not fabricate a URL you have not verified.\
+it as a Slack link; do not fabricate a URL you have not verified.
+
+For any question about a live or upcoming event (a game today, this week's \
+schedule, current scores, etc.), never answer from memory — your training data \
+has no reliable sense of \"today\" and can surface an unrelated game from a \
+different date. Always run a fresh WebSearch for the specific date in question, \
+and check that the date on each search result actually matches before treating \
+it as today's answer; if results are ambiguous or don't clearly state a date, \
+say so instead of guessing.\
 ";
 
+/// Runs `date` to ground the model in the actual wall-clock date at the
+/// moment each conversation starts (this process has no other source of
+/// truth for \"today\" — `DEFAULT_DATE` in the interactive CLI is a
+/// build-time constant, useless for a long-running daemon). Best-effort:
+/// if the shell-out fails for any reason, the bridge still runs, just
+/// without this grounding.
+fn today_date_context() -> Option<String> {
+    let output = std::process::Command::new("date")
+        .arg("+%A, %B %-d, %Y")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let today = String::from_utf8(output.stdout).ok()?;
+    let today = today.trim();
+    (!today.is_empty()).then(|| format!("Today's date is {today}."))
+}
+
 fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
+    let mut system_prompt = vec![SLACK_ASSISTANT_CONTEXT.to_string()];
+    if let Some(today) = today_date_context() {
+        system_prompt.push(today);
+    }
     rouratui_cli::build_runtime_with_tool_overrides(
         Session::new(),
         "rouratui-slack-bridge",
         model.to_string(),
-        vec![SLACK_ASSISTANT_CONTEXT.to_string()],
+        system_prompt,
         true,
         false,
         None,
