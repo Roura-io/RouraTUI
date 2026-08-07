@@ -24,6 +24,11 @@ struct SlackUser {
     id: String,
 }
 
+#[derive(Debug, Deserialize)]
+struct PostedMessage {
+    ts: String,
+}
+
 #[derive(Clone)]
 pub struct SlackClient {
     http: reqwest::Client,
@@ -99,7 +104,7 @@ impl SlackClient {
         channel: &str,
         text: &str,
         thread_ts: Option<&str>,
-    ) -> Result<(), String> {
+    ) -> Result<String, String> {
         let mut body = serde_json::json!({
             "channel": channel,
             "text": text,
@@ -119,7 +124,29 @@ impl SlackClient {
             .json()
             .await
             .map_err(|error| format!("chat.postMessage response was not valid JSON: {error}"))?;
-        let _: serde_json::Value = parse_envelope("chat.postMessage", body)?;
+        let posted: PostedMessage = parse_envelope("chat.postMessage", body)?;
+        Ok(posted.ts)
+    }
+
+    pub async fn update_message(&self, channel: &str, ts: &str, text: &str) -> Result<(), String> {
+        let body = serde_json::json!({
+            "channel": channel,
+            "ts": ts,
+            "text": text,
+        });
+        let response = self
+            .http
+            .post("https://slack.com/api/chat.update")
+            .bearer_auth(&self.bot_token)
+            .json(&body)
+            .send()
+            .await
+            .map_err(|error| format!("chat.update request failed: {error}"))?;
+        let body: serde_json::Value = response
+            .json()
+            .await
+            .map_err(|error| format!("chat.update response was not valid JSON: {error}"))?;
+        let _: serde_json::Value = parse_envelope("chat.update", body)?;
         Ok(())
     }
 }

@@ -230,6 +230,17 @@ fn spawn_turn(
     text: String,
 ) {
     tokio::spawn(async move {
+        let loading_ts = match slack
+            .post_message(&channel, "⏳ Thinking…", thread_ts.as_deref())
+            .await
+        {
+            Ok(ts) => Some(ts),
+            Err(error) => {
+                eprintln!("failed to post loading message to Slack: {error}");
+                None
+            }
+        };
+
         let reply_intent = approval::classify_reply(&text);
         let (respond_to, receiver) = tokio::sync::oneshot::channel();
         if tx
@@ -249,10 +260,14 @@ fn spawn_turn(
             Ok(Err(error)) => format!("Internal error running this turn: {error}"),
             Err(_) => "Internal error: worker thread dropped the response channel".to_string(),
         };
-        if let Err(error) = slack
-            .post_message(&channel, &reply, thread_ts.as_deref())
-            .await
-        {
+        let post_result = match &loading_ts {
+            Some(ts) => slack.update_message(&channel, ts, &reply).await,
+            None => slack
+                .post_message(&channel, &reply, thread_ts.as_deref())
+                .await
+                .map(|_| ()),
+        };
+        if let Err(error) = post_result {
             eprintln!("failed to post reply to Slack: {error}");
         }
     });
