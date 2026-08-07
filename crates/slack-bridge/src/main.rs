@@ -329,12 +329,39 @@ const UNGATED_READONLY_TOOLS: &[(&str, PermissionMode)] = &[
     ("WebFetch", PermissionMode::WorkspaceWrite),
 ];
 
+/// `build_runtime_with_tool_overrides` sends this straight through as the
+/// model's system prompt (unlike the interactive CLI and `chat-server`, this
+/// bridge passes a non-empty one) — it exists to correct two things a bare
+/// LLM otherwise gets wrong in this context: it defaults to CommonMark, which
+/// Slack does not render, and it has no way to know which of several
+/// possible streaming apps this specific family actually has installed.
+const SLACK_ASSISTANT_CONTEXT: &str = "\
+You are replying directly inside Slack messages, which render Slack's \"mrkdwn\" \
+syntax, not standard Markdown. Follow these formatting rules for every reply:
+- Bold: *text* (single asterisks), never **text**
+- Italic: _text_
+- Links: <https://example.com|link text>, never [text](url)
+- Never use Markdown tables (Slack does not render them) — use a bulleted list instead
+- Never use Markdown headers (#, ##, ###) — use a *bold* line instead
+- Bulleted lists: start each line with \"- \" or \"\u{2022} \"
+
+Family context for Yankees / sports questions: the household only has these apps \
+for watching Yankees games — Netflix (rare, only for the occasional national \
+broadcast), Peacock, Prime Video, DAZN (the exclusive streaming home for YES \
+Network and MSG Networks' regional Yankees broadcasts), and YouTube TV (for \
+national broadcasts on channels like ESPN, NBC, TNT, and Fox). When identifying \
+where to watch a game, name the exact app from this list rather than the \
+underlying network name (e.g. say \"DAZN\", not \"YES Network\"). When you can \
+find a direct link into that app or its live/team page via WebSearch, include \
+it as a Slack link; do not fabricate a URL you have not verified.\
+";
+
 fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
     rouratui_cli::build_runtime_with_tool_overrides(
         Session::new(),
         "rouratui-slack-bridge",
         model.to_string(),
-        Vec::new(),
+        vec![SLACK_ASSISTANT_CONTEXT.to_string()],
         true,
         false,
         None,
