@@ -16,7 +16,10 @@
 mod app;
 
 pub use app::init;
-pub use app::{build_runtime, AllowedToolSet, BuiltRuntime, InternalPromptProgressReporter};
+pub use app::{
+    build_runtime, build_runtime_with_tool_overrides, AllowedToolSet, BuiltRuntime,
+    InternalPromptProgressReporter,
+};
 
 // Crate-internal only (not re-exported outside this crate): lets
 // crate::X references inside main.rs (including nested test modules),

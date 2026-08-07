@@ -305,8 +305,17 @@ fn run_one_turn(
     Ok(text)
 }
 
+/// Read-only information lookups don't need the chat-relayed approval
+/// round trip family members would otherwise hit for every factual
+/// question — only tools that change state or spend money stay gated at
+/// `WorkspaceWrite` (bash, file writes, git, etc.).
+const UNGATED_READONLY_TOOLS: &[(&str, PermissionMode)] = &[
+    ("WebSearch", PermissionMode::WorkspaceWrite),
+    ("WebFetch", PermissionMode::WorkspaceWrite),
+];
+
 fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
-    rouratui_cli::build_runtime(
+    rouratui_cli::build_runtime_with_tool_overrides(
         Session::new(),
         "rouratui-slack-bridge",
         model.to_string(),
@@ -316,6 +325,7 @@ fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
         None,
         PermissionMode::WorkspaceWrite,
         None,
+        UNGATED_READONLY_TOOLS,
     )
     .map_err(|error| format!("failed to build runtime: {error}"))
 }

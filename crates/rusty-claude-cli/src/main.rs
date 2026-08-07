@@ -12530,6 +12530,39 @@ pub fn build_runtime(
     permission_mode: PermissionMode,
     progress_reporter: Option<InternalPromptProgressReporter>,
 ) -> Result<BuiltRuntime, Box<dyn std::error::Error>> {
+    build_runtime_with_tool_overrides(
+        session,
+        session_id,
+        model,
+        system_prompt,
+        enable_tools,
+        emit_output,
+        allowed_tools,
+        permission_mode,
+        progress_reporter,
+        &[],
+    )
+}
+
+/// Same as [`build_runtime`], but lets the caller lower specific tools'
+/// required permission below `permission_mode`'s default -- for example, a
+/// bridge that wants read-only lookups like `WebSearch` to skip the
+/// approval-relay round trip while everything else (bash, file writes,
+/// git) stays gated at `permission_mode` as normal.
+#[allow(clippy::needless_pass_by_value)]
+#[allow(clippy::too_many_arguments)]
+pub fn build_runtime_with_tool_overrides(
+    session: Session,
+    session_id: &str,
+    model: String,
+    system_prompt: Vec<String>,
+    enable_tools: bool,
+    emit_output: bool,
+    allowed_tools: Option<AllowedToolSet>,
+    permission_mode: PermissionMode,
+    progress_reporter: Option<InternalPromptProgressReporter>,
+    tool_requirement_overrides: &[(&str, PermissionMode)],
+) -> Result<BuiltRuntime, Box<dyn std::error::Error>> {
     let runtime_plugin_state = build_runtime_plugin_state()?;
     build_runtime_with_plugin_state(
         session,
@@ -12542,6 +12575,7 @@ pub fn build_runtime(
         permission_mode,
         progress_reporter,
         runtime_plugin_state,
+        tool_requirement_overrides,
     )
 }
 
@@ -12558,6 +12592,7 @@ fn build_runtime_with_plugin_state(
     permission_mode: PermissionMode,
     progress_reporter: Option<InternalPromptProgressReporter>,
     runtime_plugin_state: RuntimePluginState,
+    tool_requirement_overrides: &[(&str, PermissionMode)],
 ) -> Result<BuiltRuntime, Box<dyn std::error::Error>> {
     // Persist the model in session metadata so resumed sessions can report it.
     if session.model.is_none() {
@@ -12572,6 +12607,11 @@ fn build_runtime_with_plugin_state(
     plugin_registry.initialize()?;
     let policy = permission_policy(permission_mode, &feature_config, &tool_registry)
         .map_err(std::io::Error::other)?;
+    let policy = tool_requirement_overrides
+        .iter()
+        .fold(policy, |policy, (name, mode)| {
+            policy.with_tool_requirement((*name).to_string(), *mode)
+        });
     let cancel_signal = TurnCancelSignal::new();
     let mut client = AnthropicRuntimeClient::new(
         session_id,
@@ -19719,6 +19759,7 @@ UU conflicted.rs",
             PermissionMode::DangerFullAccess,
             None,
             runtime_plugin_state,
+            &[],
         )
         .expect("runtime should build");
 
