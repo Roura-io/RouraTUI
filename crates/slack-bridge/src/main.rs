@@ -55,7 +55,7 @@ struct Cli {
         long,
         env = "SLACK_ALLOWED_EMAILS",
         value_delimiter = ',',
-        default_value = "cjroura@roura.io,wroura@gmail.com,carito.rodas92@gmail.com,susanroura@gmail.com"
+        default_value = "hqqncggw4t@privaterelay.appleid.com,wroura@gmail.com,carito.rodas92@gmail.com,susanroura@gmail.com"
     )]
     allowed_emails: Vec<String>,
     /// Ollama model tag to drive the orchestrator with.
