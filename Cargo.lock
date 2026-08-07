@@ -2902,6 +2902,7 @@ version = "3.0.7"
 dependencies = [
  "clap",
  "futures-util",
+ "regex",
  "reqwest 0.12.28",
  "rouratui-cli",
  "runtime",

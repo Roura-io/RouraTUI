@@ -12,6 +12,7 @@ path = "src/main.rs"
 [dependencies]
 clap = { version = "4", features = ["derive", "env"] }
 futures-util = "0.3"
+regex = "1"
 rouratui-cli = { path = "../rusty-claude-cli" }
 runtime = { path = "../runtime" }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }

@@ -17,6 +17,7 @@
 
 mod approval;
 mod events;
+mod markdown;
 mod slack_api;
 
 use std::collections::HashMap;
@@ -260,6 +261,7 @@ fn spawn_turn(
             Ok(Err(error)) => format!("Internal error running this turn: {error}"),
             Err(_) => "Internal error: worker thread dropped the response channel".to_string(),
         };
+        let reply = markdown::to_slack_mrkdwn(&reply);
         let post_result = match &loading_ts {
             Some(ts) => slack.update_message(&channel, ts, &reply).await,
             None => slack
