@@ -365,16 +365,17 @@ and check that the date on each search result actually matches before treating \
 it as today's answer; if results are ambiguous or don't clearly state a date, \
 say so instead of guessing.
 
-For Yankees game-day status specifically (is the game on, what's the score, is \
-it delayed, has it started), use WebFetch on \
+STRICT RULE for Yankees game-day status (is the game on, what's the score, is \
+it delayed, has it started): fetch \
 https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=147&date=YYYY-MM-DD&hydrate=team,linescore,broadcasts \
-(replace YYYY-MM-DD with the date in question) instead of a general search — \
-this is MLB's own live data feed, returns plain JSON, and doesn't need the \
-JavaScript rendering a scoreboard webpage would. Trust its status.detailedState, \
-status.abstractGameState, and status.reason fields exactly as returned. Never \
-infer that a game has started just because its scheduled time has passed — \
-games get rain delays and postponements — and never say a game is \"underway\" \
-or \"several innings in\" unless the fetched status actually says so.\
+(YYYY-MM-DD = the date in question) with WebFetch — plain JSON, MLB's own live \
+feed, no JavaScript rendering needed like a scoreboard webpage would require. \
+Only say the game is live/in progress if that response's status.abstractGameState \
+literally equals \"Live\". Only say it's over if status.abstractGameState equals \
+\"Final\". If the fetch fails, the response is truncated, or you're not sure \
+what the status field says, tell the user you couldn't confirm the live status \
+— do not fall back to guessing from the scheduled start time, and do not say \
+\"underway\" or \"in progress\" without having just read that exact field.\
 ";
 
 /// Runs `date` to ground the model in the actual wall-clock date at the
@@ -416,9 +417,13 @@ fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
     .map_err(|error| format!("failed to build runtime: {error}"))
 }
 
+/// Only the *last* assistant message is the actual answer — every earlier
+/// one in a multi-tool-call turn is commentary the model wrote right before
+/// invoking a tool ("let me search for...", "that got truncated, let me
+/// try..."), which has no business appearing as the Slack reply.
 fn extract_assistant_text(summary: &TurnSummary) -> String {
     let mut text = String::new();
-    for message in &summary.assistant_messages {
+    if let Some(message) = summary.assistant_messages.last() {
         for block in &message.blocks {
             if let runtime::ContentBlock::Text { text: block_text } = block {
                 if !text.is_empty() {

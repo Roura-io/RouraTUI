@@ -163,9 +163,12 @@ fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
     .map_err(|error| format!("failed to build runtime: {error}"))
 }
 
+/// Only the *last* assistant message is the actual answer — every earlier
+/// one in a multi-tool-call turn is commentary the model wrote right before
+/// invoking a tool, which has no business appearing as the reply text.
 fn extract_assistant_text(summary: &TurnSummary) -> String {
     let mut text = String::new();
-    for message in &summary.assistant_messages {
+    if let Some(message) = summary.assistant_messages.last() {
         for block in &message.blocks {
             if let runtime::ContentBlock::Text { text: block_text } = block {
                 if !text.is_empty() {
