@@ -363,7 +363,18 @@ has no reliable sense of \"today\" and can surface an unrelated game from a \
 different date. Always run a fresh WebSearch for the specific date in question, \
 and check that the date on each search result actually matches before treating \
 it as today's answer; if results are ambiguous or don't clearly state a date, \
-say so instead of guessing.\
+say so instead of guessing.
+
+For Yankees game-day status specifically (is the game on, what's the score, is \
+it delayed, has it started), use WebFetch on \
+https://statsapi.mlb.com/api/v1/schedule?sportId=1&teamId=147&date=YYYY-MM-DD&hydrate=team,linescore,broadcasts \
+(replace YYYY-MM-DD with the date in question) instead of a general search — \
+this is MLB's own live data feed, returns plain JSON, and doesn't need the \
+JavaScript rendering a scoreboard webpage would. Trust its status.detailedState, \
+status.abstractGameState, and status.reason fields exactly as returned. Never \
+infer that a game has started just because its scheduled time has passed — \
+games get rain delays and postponements — and never say a game is \"underway\" \
+or \"several innings in\" unless the fetched status actually says so.\
 ";
 
 /// Runs `date` to ground the model in the actual wall-clock date at the
