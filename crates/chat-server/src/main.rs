@@ -51,6 +51,16 @@ struct Cli {
         default_value = "qwen3.6:27b-coding-bf16"
     )]
     model: String,
+    /// Reasoning effort forwarded to the model. `none` disables thinking
+    /// tokens, which dominates latency for chat traffic on thinking-capable
+    /// models. Use `low`/`medium`/`high` to re-enable reasoning, or `default`
+    /// to leave the provider's own behaviour untouched.
+    #[arg(
+        long,
+        env = "ROURATUI_CHAT_REASONING_EFFORT",
+        default_value = "none"
+    )]
+    reasoning_effort: String,
 }
 
 struct TurnRequest {
@@ -78,7 +88,8 @@ async fn main() {
 
     let (tx, rx) = std_mpsc::channel::<TurnRequest>();
     let model = cli.model.clone();
-    std::thread::spawn(move || worker_loop(rx, model));
+    let reasoning_effort = normalize_reasoning_effort(&cli.reasoning_effort);
+    std::thread::spawn(move || worker_loop(rx, model, reasoning_effort));
 
     let state = AppState { worker: tx };
 
@@ -90,8 +101,8 @@ async fn main() {
 
     let addr = format!("0.0.0.0:{}", cli.port);
     println!(
-        "rouratui-chat-server listening on {addr}, model={}",
-        cli.model
+        "rouratui-chat-server listening on {addr}, model={}, reasoning_effort={}",
+        cli.model, cli.reasoning_effort
     );
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
@@ -104,7 +115,11 @@ async fn main() {
 /// Owns every `BuiltRuntime` for the life of the process. Runs on a plain
 /// OS thread (not part of the Tokio runtime) so the non-`Send` runtime
 /// never needs to cross an async task boundary.
-fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
+fn worker_loop(
+    rx: std_mpsc::Receiver<TurnRequest>,
+    model: String,
+    reasoning_effort: Option<String>,
+) {
     let approvals = PendingApprovals::new();
     let mut runtimes: HashMap<ConversationKey, rouratui_cli::BuiltRuntime> = HashMap::new();
 
@@ -113,6 +128,7 @@ fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
             &mut runtimes,
             &approvals,
             &model,
+            reasoning_effort.as_deref(),
             request.key,
             request.reply_intent,
             request.user_input,
@@ -127,13 +143,14 @@ fn run_one_turn(
     runtimes: &mut HashMap<ConversationKey, rouratui_cli::BuiltRuntime>,
     approvals: &PendingApprovals,
     model: &str,
+    reasoning_effort: Option<&str>,
     key: ConversationKey,
     reply_intent: approval::ReplyIntent,
     user_input: String,
 ) -> Result<String, String> {
     let mut built = match runtimes.remove(&key) {
         Some(existing) => existing,
-        None => new_runtime(model)?,
+        None => new_runtime(model, reasoning_effort)?,
     };
 
     let mut prompter = ChatApprovalPrompter::new(key, approvals, reply_intent);
@@ -148,8 +165,11 @@ fn run_one_turn(
     Ok(text)
 }
 
-fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
-    rouratui_cli::build_runtime(
+fn new_runtime(
+    model: &str,
+    reasoning_effort: Option<&str>,
+) -> Result<rouratui_cli::BuiltRuntime, String> {
+    let mut built = rouratui_cli::build_runtime(
         Session::new(),
         "rouratui-chat-server",
         model.to_string(),
@@ -160,7 +180,20 @@ fn new_runtime(model: &str) -> Result<rouratui_cli::BuiltRuntime, String> {
         PermissionMode::WorkspaceWrite,
         None,
     )
-    .map_err(|error| format!("failed to build runtime: {error}"))
+    .map_err(|error| format!("failed to build runtime: {error}"))?;
+    built.set_reasoning_effort(reasoning_effort.map(str::to_string));
+    Ok(built)
+}
+
+/// `default` (or empty) leaves the provider's own reasoning behaviour alone.
+/// Anything else is forwarded verbatim, including `none` to disable thinking.
+fn normalize_reasoning_effort(raw: &str) -> Option<String> {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("default") {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
 }
 
 fn extract_assistant_text(summary: &TurnSummary) -> String {

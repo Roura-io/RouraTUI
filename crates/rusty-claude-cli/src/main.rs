@@ -7228,6 +7228,18 @@ pub struct BuiltRuntime {
 }
 
 impl BuiltRuntime {
+    /// Set the reasoning effort forwarded to the underlying API client.
+    ///
+    /// `Some("none")` suppresses the model's hidden reasoning tokens. On
+    /// thinking-capable Ollama models that is the dominant latency cost for
+    /// chat-style traffic; pass `low`/`medium`/`high` to re-enable it, or
+    /// `None` to leave the provider's own default untouched.
+    pub fn set_reasoning_effort(&mut self, effort: Option<String>) {
+        if let Some(runtime) = self.runtime.as_mut() {
+            runtime.api_client_mut().set_reasoning_effort(effort);
+        }
+    }
+
     fn new(
         runtime: ConversationRuntime<AnthropicRuntimeClient, CliToolExecutor>,
         plugin_registry: PluginRegistry,
