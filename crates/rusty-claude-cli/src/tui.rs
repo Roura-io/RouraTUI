@@ -481,7 +481,6 @@ where
                     let (result_tx, result_rx) = mpsc::channel::<Result<String, TurnFailure>>();
                     let renderer = scope.spawn(move || -> io::Result<_> {
                         loop {
-                            let mut changed = false;
                             // #RTUI-SCROLL-DURING-TURN: this loop owns the
                             // terminal for the whole turn (the outer event
                             // loop in `run` is blocked on
@@ -499,17 +498,14 @@ where
                                         if is_interrupt(key) {
                                             renderer_cancel_signal.cancel();
                                             app.status = "stopping…".to_string();
-                                            changed = true;
                                         } else {
                                             match key.code {
                                                 KeyCode::PageUp => {
                                                     app.scroll = app.scroll.saturating_sub(5);
                                                     app.user_scrolled = true;
-                                                    changed = true;
                                                 }
                                                 KeyCode::PageDown => {
                                                     app.scroll = app.scroll.saturating_add(5);
-                                                    changed = true;
                                                 }
                                                 _ => {}
                                             }
@@ -519,11 +515,9 @@ where
                                         MouseEventKind::ScrollUp => {
                                             app.scroll = app.scroll.saturating_sub(3);
                                             app.user_scrolled = true;
-                                            changed = true;
                                         }
                                         MouseEventKind::ScrollDown => {
                                             app.scroll = app.scroll.saturating_add(3);
-                                            changed = true;
                                         }
                                         _ => {}
                                     },
@@ -558,16 +552,19 @@ where
                                         format!("running {tool_name}")
                                     };
                                 }
-                                changed = true;
                             }
                             if let Ok(result) = result_rx.try_recv() {
                                 app.finish_turn(result);
                                 terminal.draw(|frame| draw(frame, &mut app))?;
                                 return Ok((terminal, app));
                             }
-                            // Keep the TUI alive at 20 FPS while the model is thinking so
-                            // the loading indicator visibly animates even without events.
-                            let _ = changed;
+                            // Redraw unconditionally rather than only on a
+                            // dirty flag: the `recv_timeout` above paces this
+                            // loop at ~20 FPS, and the spinner animates off
+                            // `spinner_phase`, which `draw` advances itself.
+                            // An event-driven redraw would freeze it whenever
+                            // the model is thinking quietly — exactly when it
+                            // most needs to look alive.
                             terminal.draw(|frame| draw(frame, &mut app))?;
                         }
                     });
@@ -636,7 +633,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let areas = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(6),
+            Constraint::Length(HEADER_HEIGHT),
             Constraint::Min(5),
             Constraint::Length(5),
             Constraint::Length(1),
@@ -796,6 +793,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     });
     frame.render_widget(Paragraph::new(footer), areas[3]);
 }
+
+/// Rows the session header needs: the five content lines `draw_header`
+/// builds, plus the top and bottom rows of its `Borders::ALL` block. Keep
+/// this in step with that line list — the block silently clips whatever
+/// doesn't fit, so a header that outgrows its constraint loses its last
+/// line with no warning rather than reflowing.
+const HEADER_HEIGHT: u16 = 5 + 2;
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
     let model_state = if app.status == "ready" {
