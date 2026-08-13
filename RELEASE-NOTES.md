@@ -1,3 +1,52 @@
+# rouraTUI v3.0.8
+
+A correctness release. It makes the test suite trustworthy — the workspace has
+never been safe to run in parallel, which silently undermined every gate that
+depended on it, including this release script — and restores a header line that
+has been invisible since RTUI-0027.
+
+## New in 3.0.8
+
+- Adopted evidence-first retrieval (RTUI-0047).
+
+## Fixed in 3.0.8
+
+- Serialized the test suite (RTUI-0049). ~375 call sites across eight crates
+  mutate process-global state from test code — `env::set_var`/`remove_var`,
+  most often `HOME` and `CLAW_CONFIG_HOME`, plus `env::set_current_dir`. Rust
+  runs a binary's tests as threads in one process, so overlapping tests
+  corrupted each other. Measured on an idle machine, the parallel suite failed
+  2 runs in 5, with a different test each time. Because `cargo test` stops at
+  the first failing binary, a single race also skipped 17 of the 43 test
+  binaries — runs that looked like partial failures were partial runs. Now
+  serialized workspace-wide via `.cargo/config.toml`, which costs about 11
+  seconds and applies to every invocation, this release script included.
+- Unclipped the session header. RTUI-0027 grew the header to five content
+  lines inside a `Borders::ALL` block but raised its constraint only to 6
+  rows; five lines plus two borders needs 7, so the keybinding hint line has
+  not rendered since. The height is now a named `HEADER_HEIGHT` constant
+  showing the 5 + 2 derivation.
+- Removed a dead `changed` flag from the in-turn renderer loop. It was
+  assigned in six places and discarded via `let _ = changed;`, implying
+  conditional redraws that never existed. The unconditional redraw is
+  deliberate — the loop is paced at ~20 FPS by `recv_timeout` and the spinner
+  animates off `spinner_phase`, so a dirty-flag redraw would freeze the
+  spinner exactly while the model is thinking quietly.
+
+## Known issues
+
+- Test serialization is a mitigation, not a cure. The underlying isolation
+  debt — those ~375 global-state call sites — remains, and the suite still
+  cannot be run in parallel. Paying it down needs its own change.
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace` — 43 binaries, 1658 tests, 8 consecutive clean runs
+
+---
+
 # rouraTUI v3.0.7
 
 This release adds the first operator bridge for Rouratui: an approval-aware,
