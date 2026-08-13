@@ -17,7 +17,7 @@ use ratatui_crossterm::crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui_crossterm::CrosstermBackend;
-use ratatui_textarea::{Input, Key, TextArea};
+use ratatui_textarea::{Input, Key, TextArea, WrapMode};
 use ratatui_widgets::block::{Block, Padding};
 use ratatui_widgets::borders::Borders;
 use ratatui_widgets::paragraph::{Paragraph, Wrap};
@@ -145,6 +145,14 @@ struct App<'a> {
 /// place.
 fn composer_textarea<'a>() -> TextArea<'a> {
     let mut composer = TextArea::default();
+    // #RTUI-COMPOSER-WRAP: the default is `WrapMode::None`, which scrolls a
+    // long line off to the right — you lose sight of the start of your own
+    // sentence while the two rows below it sit empty. Soft-wrap at word
+    // boundaries instead, falling back to glyphs so a single unbroken token
+    // (a long path, a URL) still wraps rather than running off the edge.
+    // This is render-time only: the buffer keeps one logical line, so a
+    // wrapped message is still submitted as the single line it was typed as.
+    composer.set_wrap_mode(WrapMode::WordOrGlyph);
     composer.set_placeholder_text("Ask RouraTUI anything…");
     composer.set_cursor_line_style(Style::default());
     composer.set_cursor_style(Style::default().fg(Color::Black).bg(CORAL));
@@ -242,6 +250,61 @@ impl App<'_> {
         self.composer.insert_str(&insert);
         self.suggestions.clear();
         self.suggestion_index = 0;
+    }
+
+    /// Every key that only edits the composer, drives the dropdown, or moves
+    /// the transcript — nothing that submits or quits.
+    ///
+    /// #RTUI-TYPE-DURING-TURN: shared by the idle loop in `run` and the
+    /// in-turn renderer loop. The in-turn loop used to read keys and match
+    /// only PageUp/PageDown, dropping every character on the floor, so you
+    /// could not compose your next message while the model worked — and
+    /// because the keys were consumed rather than left in the terminal
+    /// buffer, nothing showed up after the turn ended either. Routing both
+    /// loops through one method is what keeps them from drifting apart again.
+    fn handle_composer_key(&mut self, key: KeyEvent) {
+        if !self.suggestions.is_empty() {
+            match key.code {
+                KeyCode::Down => {
+                    self.select_next_suggestion();
+                    return;
+                }
+                KeyCode::Up => {
+                    self.select_previous_suggestion();
+                    return;
+                }
+                KeyCode::Tab => {
+                    self.accept_suggestion();
+                    return;
+                }
+                KeyCode::Esc => {
+                    // Dismiss the dropdown without touching the composer text —
+                    // Esc here is "never mind," not "clear what I typed."
+                    self.suggestions.clear();
+                    self.suggestion_index = 0;
+                    return;
+                }
+                _ => {}
+            }
+        }
+        if is_newline(key) {
+            self.composer_focused = true;
+            self.composer.insert_newline();
+            self.refresh_suggestions();
+            return;
+        }
+        match key.code {
+            KeyCode::PageUp => {
+                self.scroll = self.scroll.saturating_sub(5);
+                self.user_scrolled = true;
+            }
+            KeyCode::PageDown => self.scroll = self.scroll.saturating_add(5),
+            _ => {
+                self.composer_focused = true;
+                self.composer.input(Input::from(key));
+                self.refresh_suggestions();
+            }
+        }
     }
 
     fn submit(&mut self) -> Option<String> {
@@ -500,19 +563,18 @@ where
                                             renderer_cancel_signal.cancel();
                                             app.status = "stopping…".to_string();
                                             changed = true;
-                                        } else {
-                                            match key.code {
-                                                KeyCode::PageUp => {
-                                                    app.scroll = app.scroll.saturating_sub(5);
-                                                    app.user_scrolled = true;
-                                                    changed = true;
-                                                }
-                                                KeyCode::PageDown => {
-                                                    app.scroll = app.scroll.saturating_add(5);
-                                                    changed = true;
-                                                }
-                                                _ => {}
-                                            }
+                                        } else if !is_submit(key) {
+                                            // #RTUI-TYPE-DURING-TURN: everything
+                                            // except submit now reaches the
+                                            // composer, so the next message can
+                                            // be written while this turn runs.
+                                            // Enter is deliberately inert here —
+                                            // the turn owns the request loop, so
+                                            // the draft simply waits in the
+                                            // composer for one more Enter once
+                                            // the turn finishes.
+                                            app.handle_composer_key(key);
+                                            changed = true;
                                         }
                                     }
                                     Event::Mouse(mouse) => match mouse.kind {
@@ -582,26 +644,8 @@ where
             }
         } else if is_quit(key) {
             app.should_quit = true;
-        } else if !app.suggestions.is_empty() && key.code == KeyCode::Down {
-            app.select_next_suggestion();
-        } else if !app.suggestions.is_empty() && key.code == KeyCode::Up {
-            app.select_previous_suggestion();
-        } else if !app.suggestions.is_empty() && key.code == KeyCode::Tab {
-            app.accept_suggestion();
-        } else if !app.suggestions.is_empty() && key.code == KeyCode::Esc {
-            // Dismiss the dropdown without touching the composer text —
-            // Esc here is "never mind," not "clear what I typed."
-            app.suggestions.clear();
-            app.suggestion_index = 0;
-        } else if key.code == KeyCode::PageUp {
-            app.scroll = app.scroll.saturating_sub(5);
-            app.user_scrolled = true;
-        } else if key.code == KeyCode::PageDown {
-            app.scroll = app.scroll.saturating_add(5);
         } else {
-            app.composer_focused = true;
-            app.composer.input(Input::from(key));
-            app.refresh_suggestions();
+            app.handle_composer_key(key);
         }
     }
     Ok(())
@@ -873,7 +917,7 @@ fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &
             spans
         }),
         Line::from(Span::styled(
-            "Enter send  ·  Shift-Enter/Ctrl-J newline  ·  PageUp/PageDown scroll  ·  Ctrl-C exit",
+            "Enter send  ·  ⌥↩/Shift-Enter/Ctrl-J newline  ·  PageUp/PageDown scroll  ·  Ctrl-C exit",
             Style::default().fg(FAINT),
         )),
     ];
@@ -889,11 +933,28 @@ fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &
     );
 }
 
+/// Modifiers that turn Enter into a newline rather than a send.
+///
+/// #RTUI-ALT-ENTER: ALT was missing here, so ⌥↩ — the newline people reach
+/// for first on a Mac — fell straight through to submit and sent the message
+/// half-written. Note ⌥ only arrives as ALT when the terminal is set to send
+/// Option as Meta (Terminal.app: "Use Option as Meta key"); Ctrl-J is the
+/// binding that works everywhere.
+const NEWLINE_MODIFIERS: KeyModifiers = KeyModifiers::SHIFT
+    .union(KeyModifiers::CONTROL)
+    .union(KeyModifiers::ALT);
+
 fn is_submit(key: KeyEvent) -> bool {
-    key.code == KeyCode::Enter
-        && !key
-            .modifiers
-            .intersects(KeyModifiers::SHIFT | KeyModifiers::CONTROL)
+    key.code == KeyCode::Enter && !key.modifiers.intersects(NEWLINE_MODIFIERS)
+}
+
+/// The newline keys the footer advertises. Ctrl-J is spelled out because
+/// crossterm reports it as `Char('j')` + CONTROL, which the textarea's
+/// default keymap has no binding for — relying on fall-through left the
+/// advertised "Ctrl-J newline" doing nothing at all.
+fn is_newline(key: KeyEvent) -> bool {
+    (key.code == KeyCode::Enter && key.modifiers.intersects(NEWLINE_MODIFIERS))
+        || (key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL))
 }
 
 fn is_quit(key: KeyEvent) -> bool {
@@ -949,7 +1010,9 @@ impl Drop for TerminalSession {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_quit, is_submit, App, ApprovalDecision, MessageRole, TuiConfig, TurnEvent};
+    use super::{
+        is_newline, is_quit, is_submit, App, ApprovalDecision, MessageRole, TuiConfig, TurnEvent,
+    };
     use ratatui_crossterm::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use std::sync::mpsc;
 
@@ -964,6 +1027,72 @@ mod tests {
             KeyCode::Enter,
             KeyModifiers::CONTROL
         )));
+        // #RTUI-ALT-ENTER: ⌥↩ used to fall through this check and send.
+        assert!(!is_submit(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT)));
+    }
+
+    #[test]
+    fn newline_keys_are_the_complement_of_submit() {
+        for modifiers in [
+            KeyModifiers::ALT,
+            KeyModifiers::SHIFT,
+            KeyModifiers::CONTROL,
+        ] {
+            let key = KeyEvent::new(KeyCode::Enter, modifiers);
+            assert!(
+                is_newline(key),
+                "{modifiers:?}+Enter should insert a newline"
+            );
+            assert!(!is_submit(key), "{modifiers:?}+Enter should not submit");
+        }
+        assert!(is_newline(KeyEvent::new(
+            KeyCode::Char('j'),
+            KeyModifiers::CONTROL
+        )));
+        // Bare Enter sends; it is never a newline.
+        let plain = KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE);
+        assert!(is_submit(plain));
+        assert!(!is_newline(plain));
+    }
+
+    #[test]
+    fn typing_reaches_the_composer_during_a_turn() {
+        // #RTUI-TYPE-DURING-TURN: the in-turn loop routes every non-submit,
+        // non-interrupt key through `handle_composer_key`, so this is the
+        // unit-level stand-in for "I can draft while it works."
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
+        });
+        app.composer.insert_str("first");
+        assert!(app.submit().is_some());
+        for character in "next".chars() {
+            app.handle_composer_key(KeyEvent::new(KeyCode::Char(character), KeyModifiers::NONE));
+        }
+        assert_eq!(app.composer.lines(), &["next".to_string()]);
+    }
+
+    #[test]
+    fn modified_enter_inserts_a_newline_in_the_composer() {
+        let mut app = App::new(TuiConfig {
+            version: "test".to_string(),
+            agent: "RIO Agent".to_string(),
+            permission_mode: "workspace-write".to_string(),
+            branch: "dev".to_string(),
+            slash_commands: Vec::new(),
+            skill_names: Vec::new(),
+        });
+        app.composer.insert_str("one");
+        app.handle_composer_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::ALT));
+        app.composer.insert_str("two");
+        assert_eq!(
+            app.composer.lines(),
+            &["one".to_string(), "two".to_string()]
+        );
     }
 
     #[test]
