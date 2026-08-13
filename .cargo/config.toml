@@ -1,0 +1,33 @@
+# Tests in this workspace are not safe to run concurrently.
+#
+# Across the crates there are ~375 call sites that mutate process-global state
+# from test code — `env::set_var`/`env::remove_var` (most often HOME and
+# CLAW_CONFIG_HOME) and `env::set_current_dir`. Rust runs a binary's tests as
+# threads in a single process, so any two of those overlapping corrupt each
+# other's view of the environment.
+#
+# The symptom is intermittent and misleading. Measured on an idle M3, the
+# parallel suite failed 2 runs in 5, with a different test each time:
+#
+#   runtime::bash::tests::sets_non_interactive_git_and_ssh_env
+#     left: ""  right: "0|/usr/bin/false|/usr/bin/false|force|ssh -o BatchMode..."
+#   runtime::hooks::tests::malformed_nonempty_hook_output_reports_...
+#
+# Worse than the flake itself: `cargo test` stops after the first failing
+# binary, so a single race silently skipped 17 of the workspace's 43 test
+# binaries — a run that looks like a partial failure is really a partial run.
+#
+# Serializing costs about 11 seconds on the full workspace (25s vs 14s) and
+# makes the result trustworthy, which matters because automation gates on it:
+# the release script, the polish pass, and the weekly regression all decide
+# whether to revert or publish based on this suite.
+#
+# This is a mitigation, not a cure. The real fix is test isolation — either a
+# shared serialization guard on the env-touching tests, or removing the global
+# reads in favour of injected config. Until then, do not remove this.
+#
+# Note this does not override an explicit RUST_TEST_THREADS from your shell,
+# nor `-- --test-threads=N` on the command line, so you can still opt out
+# locally when you know a subset is safe.
+[env]
+RUST_TEST_THREADS = "1"
