@@ -799,6 +799,8 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
 /// this in step with that line list — the block silently clips whatever
 /// doesn't fit, so a header that outgrows its constraint loses its last
 /// line with no warning rather than reflowing.
+// Bumping this without adding a line to the header block silently clips the
+// bottom row rather than failing to compile, so keep the two in step.
 const HEADER_HEIGHT: u16 = 5 + 2;
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
