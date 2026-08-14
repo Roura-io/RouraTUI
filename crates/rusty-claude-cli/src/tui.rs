@@ -690,12 +690,22 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     draw_header(frame, areas[0], app);
     let transcript = app.transcript();
     let transcript_height = transcript.height() as u16;
-    let viewport_height = areas[1].height.saturating_sub(2);
+    // The block draws only a bottom border, so exactly one row is chrome.
+    // Subtracting two understated the viewport and left a spare blank line
+    // below the last message even when the scroll offset was clamped.
+    let viewport_height = areas[1].height.saturating_sub(1);
     let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
         app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
+    } else if app.scroll >= bottom {
+        // #RTUI-SCROLL-CEILING: the wheel and PageDown handlers advance the
+        // offset with `saturating_add` and no ceiling of their own, so this is
+        // the only thing stopping it. The clamp used to also require
+        // `user_scrolled`, which is set solely when scrolling *up* — so anyone
+        // who scrolled down without first scrolling up skipped it entirely and
+        // could drive the offset toward u16::MAX, leaving the transcript above
+        // the viewport and blank rows in it. Landing on `bottom` is also what
+        // resumes auto-follow.
         app.user_scrolled = false;
         app.scroll = bottom;
     }
