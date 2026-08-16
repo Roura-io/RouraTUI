@@ -450,7 +450,11 @@ where
         let event = event::read()?;
         if let Event::Mouse(mouse) = event {
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                app.composer_focused = mouse.row >= terminal.size()?.height.saturating_sub(6);
+                app.composer_focused = mouse.row
+                    >= terminal
+                        .size()?
+                        .height
+                        .saturating_sub(COMPOSER_HEIGHT + FOOTER_HEIGHT);
             }
             // #RTUI-MOUSE-SCROLL: the wheel/trackpad was never wired to
             // scrolling at all — every mouse event past the focus check was
@@ -635,8 +639,8 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .constraints([
             Constraint::Length(HEADER_HEIGHT),
             Constraint::Min(5),
-            Constraint::Length(5),
-            Constraint::Length(1),
+            Constraint::Length(COMPOSER_HEIGHT),
+            Constraint::Length(FOOTER_HEIGHT),
         ])
         .split(frame.area());
 
@@ -800,6 +804,16 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
 /// doesn't fit, so a header that outgrows its constraint loses its last
 /// line with no warning rather than reflowing.
 const HEADER_HEIGHT: u16 = 5 + 2;
+
+/// Rows reserved for the composer — or for the approval card, which reuses
+/// the same slot — and for the one-line status footer below it. `draw`
+/// builds the vertical layout from these, and `run`'s mouse hit-test needs
+/// the composer's top row, which is `terminal_height - (COMPOSER_HEIGHT +
+/// FOOTER_HEIGHT)`. That sum used to be a bare `6` two hundred lines away
+/// from the constraints it described, so resizing either pane would have
+/// silently aimed the click target at the wrong rows.
+const COMPOSER_HEIGHT: u16 = 5;
+const FOOTER_HEIGHT: u16 = 1;
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
     let model_state = if app.status == "ready" {
