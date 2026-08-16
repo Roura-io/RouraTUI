@@ -651,8 +651,14 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
         app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
+    } else if app.scroll >= bottom {
+        // Paged all the way back down — resume auto-follow. This clamp is
+        // deliberately not gated on `user_scrolled`: PageDown and wheel-down
+        // don't set that flag (so paging *down* can never start a manual
+        // scroll), which meant an auto-following reader could page straight
+        // past the last line — `Paragraph::scroll` happily renders blank rows
+        // past the end, so the transcript slid off the top and nothing pulled
+        // it back until the next streamed token reset the scroll.
         app.user_scrolled = false;
         app.scroll = bottom;
     }
@@ -665,8 +671,14 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .wrap(Wrap { trim: false })
         .scroll((app.scroll, 0));
     frame.render_widget(paragraph, areas[1]);
-    let mut scrollbar_state =
-        ScrollbarState::new(transcript_height as usize).position(app.scroll as usize);
+    // `ScrollbarState`'s length counts scroll *positions*, not content lines —
+    // the thumb is placed at `position / content_length` along the track, and
+    // `app.scroll` only ever ranges over `0..=bottom`. Handing it the full
+    // transcript height therefore stranded the thumb a viewport short of the
+    // end even with the transcript scrolled all the way down. Passing `bottom`
+    // also hides the scrollbar outright once the transcript fits, instead of
+    // drawing a track that looks scrollable but isn't.
+    let mut scrollbar_state = ScrollbarState::new(bottom as usize).position(app.scroll as usize);
     frame.render_stateful_widget(
         Scrollbar::new(ScrollbarOrientation::VerticalRight),
         areas[1],
