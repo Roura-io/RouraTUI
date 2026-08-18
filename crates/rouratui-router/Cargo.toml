@@ -1,0 +1,9 @@
+[package]
+name = "rouratui-router"
+version = "3.0.9"
+edition = "2021"
+license = "MIT"
+publish = false
+
+[lints]
+workspace = true

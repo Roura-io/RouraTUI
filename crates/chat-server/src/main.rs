@@ -26,6 +26,7 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
+use rouratui_router::{select, RouteDecision, RouteKind};
 use runtime::{PermissionMode, Session, TurnSummary};
 use tokio::sync::oneshot;
 
@@ -44,22 +45,15 @@ struct Cli {
     /// Port to listen on.
     #[arg(long, env = "ROURATUI_CHAT_PORT", default_value_t = 18080)]
     port: u16,
-    /// Ollama model tag to drive the orchestrator with.
-    #[arg(
-        long,
-        env = "ROURATUI_CHAT_MODEL",
-        default_value = "qwen3.6:27b-coding-bf16"
-    )]
+    /// Ollama model tag to drive the orchestrator with, or `auto` to route
+    /// each new conversation through the shared RouraTUI policy.
+    #[arg(long, env = "ROURATUI_CHAT_MODEL", default_value = "auto")]
     model: String,
     /// Reasoning effort forwarded to the model. `none` disables thinking
     /// tokens, which dominates latency for chat traffic on thinking-capable
     /// models. Use `low`/`medium`/`high` to re-enable reasoning, or `default`
     /// to leave the provider's own behaviour untouched.
-    #[arg(
-        long,
-        env = "ROURATUI_CHAT_REASONING_EFFORT",
-        default_value = "none"
-    )]
+    #[arg(long, env = "ROURATUI_CHAT_REASONING_EFFORT", default_value = "none")]
     reasoning_effort: String,
 }
 
@@ -121,7 +115,8 @@ fn worker_loop(
     reasoning_effort: Option<String>,
 ) {
     let approvals = PendingApprovals::new();
-    let mut runtimes: HashMap<ConversationKey, rouratui_cli::BuiltRuntime> = HashMap::new();
+    let mut runtimes: HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)> =
+        HashMap::new();
 
     while let Ok(request) = rx.recv() {
         let result = run_one_turn(
@@ -140,7 +135,7 @@ fn worker_loop(
 }
 
 fn run_one_turn(
-    runtimes: &mut HashMap<ConversationKey, rouratui_cli::BuiltRuntime>,
+    runtimes: &mut HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)>,
     approvals: &PendingApprovals,
     model: &str,
     reasoning_effort: Option<&str>,
@@ -148,9 +143,28 @@ fn run_one_turn(
     reply_intent: approval::ReplyIntent,
     user_input: String,
 ) -> Result<String, String> {
-    let mut built = match runtimes.remove(&key) {
+    let (selected_model, mut built) = match runtimes.remove(&key) {
         Some(existing) => existing,
-        None => new_runtime(model, reasoning_effort)?,
+        None => {
+            let decision = if model == "auto" {
+                select(&user_input)
+            } else {
+                RouteDecision {
+                    model: model.to_string(),
+                    kind: RouteKind::Fallback,
+                    reason: "explicit model override",
+                }
+            };
+            eprintln!(
+                "rouratui route: model={} kind={:?} reason={}",
+                decision.model, decision.kind, decision.reason
+            );
+            let selected_model = decision.model.clone();
+            (
+                selected_model,
+                new_runtime(&decision.model, reasoning_effort)?,
+            )
+        }
     };
 
     let mut prompter = ChatApprovalPrompter::new(key, approvals, reply_intent);
@@ -161,7 +175,7 @@ fn run_one_turn(
         Err(error) => format!("Internal error running this turn: {error}"),
     };
 
-    runtimes.insert(key, built);
+    runtimes.insert(key, (selected_model, built));
     Ok(text)
 }
 
