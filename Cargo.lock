@@ -380,6 +380,7 @@ dependencies = [
  "clap",
  "futures-core",
  "rouratui-cli",
+ "rouratui-router",
  "runtime",
  "serde",
  "serde_json",
@@ -2447,6 +2448,10 @@ dependencies = [
  "tokio",
  "tools",
 ]
+
+[[package]]
+name = "rouratui-router"
+version = "3.0.9"
 
 [[package]]
 name = "runtime"
