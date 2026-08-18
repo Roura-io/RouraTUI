@@ -26,6 +26,7 @@ use axum::response::{IntoResponse, Json, Response};
 use axum::routing::{get, post};
 use axum::Router;
 use clap::Parser;
+use rouratui_router::{select, RouteDecision, RouteKind};
 use runtime::{PermissionMode, Session, TurnSummary};
 use tokio::sync::oneshot;
 
@@ -44,12 +45,9 @@ struct Cli {
     /// Port to listen on.
     #[arg(long, env = "ROURATUI_CHAT_PORT", default_value_t = 18080)]
     port: u16,
-    /// Ollama model tag to drive the orchestrator with.
-    #[arg(
-        long,
-        env = "ROURATUI_CHAT_MODEL",
-        default_value = "qwen3.6:27b-coding-bf16"
-    )]
+    /// Ollama model tag to drive the orchestrator with, or `auto` to route
+    /// each new conversation through the shared RouraTUI policy.
+    #[arg(long, env = "ROURATUI_CHAT_MODEL", default_value = "auto")]
     model: String,
 }
 
@@ -106,7 +104,8 @@ async fn main() {
 /// never needs to cross an async task boundary.
 fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
     let approvals = PendingApprovals::new();
-    let mut runtimes: HashMap<ConversationKey, rouratui_cli::BuiltRuntime> = HashMap::new();
+    let mut runtimes: HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)> =
+        HashMap::new();
 
     while let Ok(request) = rx.recv() {
         let result = run_one_turn(
@@ -124,16 +123,32 @@ fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
 }
 
 fn run_one_turn(
-    runtimes: &mut HashMap<ConversationKey, rouratui_cli::BuiltRuntime>,
+    runtimes: &mut HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)>,
     approvals: &PendingApprovals,
     model: &str,
     key: ConversationKey,
     reply_intent: approval::ReplyIntent,
     user_input: String,
 ) -> Result<String, String> {
-    let mut built = match runtimes.remove(&key) {
+    let (selected_model, mut built) = match runtimes.remove(&key) {
         Some(existing) => existing,
-        None => new_runtime(model)?,
+        None => {
+            let decision = if model == "auto" {
+                select(&user_input)
+            } else {
+                RouteDecision {
+                    model: model.to_string(),
+                    kind: RouteKind::Fallback,
+                    reason: "explicit model override",
+                }
+            };
+            eprintln!(
+                "rouratui route: model={} kind={:?} reason={}",
+                decision.model, decision.kind, decision.reason
+            );
+            let selected_model = decision.model.clone();
+            (selected_model, new_runtime(&decision.model)?)
+        }
     };
 
     let mut prompter = ChatApprovalPrompter::new(key, approvals, reply_intent);
@@ -144,7 +159,7 @@ fn run_one_turn(
         Err(error) => format!("Internal error running this turn: {error}"),
     };
 
-    runtimes.insert(key, built);
+    runtimes.insert(key, (selected_model, built));
     Ok(text)
 }
 

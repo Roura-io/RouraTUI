@@ -14,6 +14,7 @@ axum = "0.8"
 clap = { version = "4", features = ["derive", "env"] }
 futures-core = "0.3"
 rouratui-cli = { path = "../rusty-claude-cli" }
+rouratui-router = { path = "../rouratui-router" }
 runtime = { path = "../runtime" }
 serde = { version = "1", features = ["derive"] }
 serde_json.workspace = true
