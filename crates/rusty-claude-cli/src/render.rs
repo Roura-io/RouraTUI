@@ -755,13 +755,9 @@ fn normalize_nested_fences(markdown: &str) -> String {
         let opener_fl = fence_info[*opener_idx].as_ref().unwrap();
         if opener_fl.len <= *inner_max {
             let new_len = inner_max + 1;
-            let info_part = {
-                let trimmed = lines[*opener_idx]
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r');
-                let rest = &trimmed[opener_fl.indent..];
-                rest[opener_fl.len..].to_string()
-            };
+            // Only the fence length changes here. Indent, info string and
+            // trailing newline are all recovered from the original line by the
+            // rebuild loop below, so nothing else needs carrying across.
             rewrites.insert(
                 *opener_idx,
                 Rewrite {
@@ -779,11 +775,6 @@ fn normalize_nested_fences(markdown: &str) -> String {
                     indent: closer_fl.indent,
                 },
             );
-            // Store info string only in the opener; closer keeps the trailing
-            // portion which is already handled through the original line.
-            // Actually, we rebuild both lines from scratch below, including
-            // the info string for the opener.
-            let _ = info_part; // consumed in rebuild
         }
     }
 
