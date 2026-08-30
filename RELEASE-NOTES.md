@@ -1,3 +1,21 @@
+# rouraTUI v3.0.10
+
+Weekly polish roll-up for the week ending 2026-08-30.
+
+## Changes
+
+- chore(polish): clamp transcript scroll at the end of the buffer
+- chore(polish): match router terms on word starts, drop dead fence code
+- chore(polish): match short routing terms as words, drop unused sticky-model field
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace` after each individual merge and on the integrated tree
+
+---
+
 # rouraTUI v3.0.8
 
 A correctness release. It makes the test suite trustworthy — the workspace has
