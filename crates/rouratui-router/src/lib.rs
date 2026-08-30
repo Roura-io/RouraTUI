@@ -25,7 +25,6 @@ const CODING_TERMS: &[&str] = &[
     "coding",
     "review",
     "pull request",
-    "pr ",
     "commit",
     "branch",
     "git",
@@ -49,9 +48,14 @@ const CODING_TERMS: &[&str] = &[
     "implement",
     "patch",
     "workflow",
-    "ci",
     "pipeline",
 ];
+
+/// Coding terms too short to match as substrings: "ci" also sits inside
+/// "decision", "specific", and "precise", and "pr" inside "approve" and
+/// "surprise", so `contains` alone would send ordinary chat to the coding
+/// model. These are matched as standalone words instead.
+const CODING_WORD_TERMS: &[&str] = &["ci", "pr"];
 
 const DEEP_TERMS: &[&str] = &[
     "architecture",
@@ -80,7 +84,8 @@ const DEEP_TERMS: &[&str] = &[
 #[must_use]
 pub fn select(prompt: &str) -> RouteDecision {
     let normalized = prompt.to_ascii_lowercase();
-    if contains_any(&normalized, CODING_TERMS) {
+    if contains_any(&normalized, CODING_TERMS) || contains_word_any(&normalized, CODING_WORD_TERMS)
+    {
         return decision(QWEN_38, RouteKind::Coding, "coding or review task");
     }
     if contains_any(&normalized, DEEP_TERMS) {
@@ -141,6 +146,12 @@ fn starts_a_word(input: &str, term: &str) -> bool {
         .any(|(start, _)| start == 0 || !bytes[start - 1].is_ascii_alphanumeric())
 }
 
+fn contains_word_any(input: &str, terms: &[&str]) -> bool {
+    input
+        .split(|c: char| !c.is_ascii_alphanumeric())
+        .any(|word| terms.contains(&word))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{select, RouteKind, GPT_OSS, NEMOTRON_35, QWEN_36, QWEN_38};
@@ -162,6 +173,15 @@ mod tests {
     fn ordinary_chat_routes_to_gpt_oss() {
         let route = select("What should I cook for dinner tonight?");
         assert_eq!(route.model, GPT_OSS);
+    }
+
+    #[test]
+    fn short_coding_terms_only_match_whole_words() {
+        // "decision" and "specific" both contain "ci"; neither is a coding task.
+        assert_eq!(select("What is your decision?").model, GPT_OSS);
+        assert_eq!(select("give me a specific answer").model, QWEN_36);
+        assert_eq!(select("the ci run is red").model, QWEN_38);
+        assert_eq!(select("can you land that pr").model, QWEN_38);
     }
 
     #[test]
