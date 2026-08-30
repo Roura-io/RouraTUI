@@ -376,6 +376,27 @@ impl App<'_> {
         None
     }
 
+    /// Resolves `scroll` against `bottom`, the largest scroll offset that
+    /// still shows transcript content (anything past it is blank rows).
+    /// `u16::MAX` is the "pin to the end" sentinel the streaming paths write,
+    /// since they can't know `bottom` — only `draw` has measured the
+    /// transcript against the viewport.
+    ///
+    /// The clamp deliberately isn't gated on `user_scrolled`: PageDown and
+    /// wheel-down leave that flag alone (paging *down* is never "the reader
+    /// wants to stay put"), so gating it meant a PageDown already at the
+    /// bottom walked `scroll` past the end of the transcript and left the
+    /// viewport staring at blank space.
+    fn apply_scroll_bounds(&mut self, bottom: u16) {
+        if self.scroll == u16::MAX {
+            self.scroll = bottom;
+        } else if self.scroll >= bottom {
+            // Reached the end — clamp, and resume auto-follow.
+            self.user_scrolled = false;
+            self.scroll = bottom;
+        }
+    }
+
     fn transcript(&self) -> Text<'static> {
         let mut lines = Vec::new();
         let last_index = self.messages.len().saturating_sub(1);
@@ -450,7 +471,11 @@ where
         let event = event::read()?;
         if let Event::Mouse(mouse) = event {
             if matches!(mouse.kind, MouseEventKind::Down(_)) {
-                app.composer_focused = mouse.row >= terminal.size()?.height.saturating_sub(6);
+                app.composer_focused = mouse.row
+                    >= terminal
+                        .size()?
+                        .height
+                        .saturating_sub(COMPOSER_HEIGHT + FOOTER_HEIGHT);
             }
             // #RTUI-MOUSE-SCROLL: the wheel/trackpad was never wired to
             // scrolling at all — every mouse event past the focus check was
@@ -635,8 +660,8 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
         .constraints([
             Constraint::Length(HEADER_HEIGHT),
             Constraint::Min(5),
-            Constraint::Length(5),
-            Constraint::Length(1),
+            Constraint::Length(COMPOSER_HEIGHT),
+            Constraint::Length(FOOTER_HEIGHT),
         ])
         .split(frame.area());
 
@@ -645,13 +670,7 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let transcript_height = transcript.height() as u16;
     let viewport_height = areas[1].height.saturating_sub(2);
     let bottom = transcript_height.saturating_sub(viewport_height);
-    if app.scroll == u16::MAX {
-        app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
-        app.user_scrolled = false;
-        app.scroll = bottom;
-    }
+    app.apply_scroll_bounds(bottom);
     let paragraph = Paragraph::new(transcript)
         .block(
             Block::default()
@@ -800,6 +819,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
 /// doesn't fit, so a header that outgrows its constraint loses its last
 /// line with no warning rather than reflowing.
 const HEADER_HEIGHT: u16 = 5 + 2;
+
+/// Rows `draw` reserves at the bottom of the screen: the composer (or the
+/// approval card that takes its place) and the one-line status footer. The
+/// mouse focus test in `run` works back from the bottom edge using these, so
+/// it tracks the layout instead of restating it as a bare `6`.
+const COMPOSER_HEIGHT: u16 = 5;
+const FOOTER_HEIGHT: u16 = 1;
 
 fn draw_header(frame: &mut ratatui_core::terminal::Frame<'_>, area: Rect, app: &App<'_>) {
     let model_state = if app.status == "ready" {
@@ -1072,7 +1098,7 @@ mod tests {
         assert!(streaming_text.contains("Hello there"));
     }
 
-    fn autocomplete_test_app() -> App<'static> {
+    fn test_app() -> App<'static> {
         App::new(TuiConfig {
             version: "test".to_string(),
             agent: "RIO Agent".to_string(),
@@ -1089,7 +1115,7 @@ mod tests {
 
     #[test]
     fn slash_prefix_filters_and_accept_replaces_composer() {
-        let mut app = autocomplete_test_app();
+        let mut app = test_app();
         app.composer.insert_str("/s");
         app.refresh_suggestions();
         let labels: Vec<&str> = app
@@ -1113,7 +1139,7 @@ mod tests {
 
     #[test]
     fn bare_word_completes_skill_names_not_slash_commands() {
-        let mut app = autocomplete_test_app();
+        let mut app = test_app();
         app.composer.insert_str("pla");
         app.refresh_suggestions();
         let labels: Vec<&str> = app
@@ -1126,7 +1152,7 @@ mod tests {
 
     #[test]
     fn suggestions_clear_once_a_space_is_typed() {
-        let mut app = autocomplete_test_app();
+        let mut app = test_app();
         app.composer.insert_str("/skills ");
         app.refresh_suggestions();
         assert!(
@@ -1136,8 +1162,61 @@ mod tests {
     }
 
     #[test]
+    fn paging_down_past_the_end_clamps_instead_of_showing_blank_rows() {
+        let mut app = test_app();
+        // Already parked at the last content row, still auto-following.
+        app.scroll = 4;
+        app.user_scrolled = false;
+
+        app.scroll = app.scroll.saturating_add(5); // PageDown
+        app.apply_scroll_bounds(4);
+
+        assert_eq!(
+            app.scroll, 4,
+            "PageDown at the bottom should stay at the bottom, not scroll into empty space"
+        );
+    }
+
+    #[test]
+    fn paging_back_down_to_the_bottom_resumes_auto_follow() {
+        let mut app = test_app();
+        app.scroll = 2;
+        app.user_scrolled = true;
+
+        app.apply_scroll_bounds(2);
+
+        assert_eq!(app.scroll, 2);
+        assert!(
+            !app.user_scrolled,
+            "reaching the bottom again should hand the stream back its auto-follow"
+        );
+    }
+
+    #[test]
+    fn scrolled_back_position_is_left_alone_mid_transcript() {
+        let mut app = test_app();
+        app.scroll = 3;
+        app.user_scrolled = true;
+
+        app.apply_scroll_bounds(20);
+
+        assert_eq!(app.scroll, 3, "a deliberate scroll-back must not be yanked");
+        assert!(app.user_scrolled);
+    }
+
+    #[test]
+    fn bottom_sentinel_resolves_to_the_last_scrollable_row() {
+        let mut app = test_app();
+        app.scroll = u16::MAX;
+
+        app.apply_scroll_bounds(7);
+
+        assert_eq!(app.scroll, 7);
+    }
+
+    #[test]
     fn suggestion_navigation_wraps_in_both_directions() {
-        let mut app = autocomplete_test_app();
+        let mut app = test_app();
         app.composer.insert_str("/s");
         app.refresh_suggestions();
         assert_eq!(app.suggestion_index, 0);
