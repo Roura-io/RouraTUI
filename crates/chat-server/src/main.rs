@@ -104,8 +104,10 @@ async fn main() {
 /// never needs to cross an async task boundary.
 fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
     let approvals = PendingApprovals::new();
-    let mut runtimes: HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)> =
-        HashMap::new();
+    // Keying the runtime by conversation is what makes routing sticky: a
+    // thread only reaches `select` on its very first turn, and afterwards
+    // reuses the runtime already bound to the model that was chosen then.
+    let mut runtimes: HashMap<ConversationKey, rouratui_cli::BuiltRuntime> = HashMap::new();
 
     while let Ok(request) = rx.recv() {
         let result = run_one_turn(
@@ -123,14 +125,14 @@ fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
 }
 
 fn run_one_turn(
-    runtimes: &mut HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)>,
+    runtimes: &mut HashMap<ConversationKey, rouratui_cli::BuiltRuntime>,
     approvals: &PendingApprovals,
     model: &str,
     key: ConversationKey,
     reply_intent: approval::ReplyIntent,
     user_input: String,
 ) -> Result<String, String> {
-    let (selected_model, mut built) = match runtimes.remove(&key) {
+    let mut built = match runtimes.remove(&key) {
         Some(existing) => existing,
         None => {
             let decision = if model == "auto" {
@@ -146,8 +148,7 @@ fn run_one_turn(
                 "rouratui route: model={} kind={:?} reason={}",
                 decision.model, decision.kind, decision.reason
             );
-            let selected_model = decision.model.clone();
-            (selected_model, new_runtime(&decision.model)?)
+            new_runtime(&decision.model)?
         }
     };
 
@@ -159,7 +160,7 @@ fn run_one_turn(
         Err(error) => format!("Internal error running this turn: {error}"),
     };
 
-    runtimes.insert(key, (selected_model, built));
+    runtimes.insert(key, built);
     Ok(text)
 }
 

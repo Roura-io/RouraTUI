@@ -119,7 +119,29 @@ fn decision(model: &str, kind: RouteKind, reason: &'static str) -> RouteDecision
 }
 
 fn contains_any(input: &str, terms: &[&str]) -> bool {
-    terms.iter().any(|term| input.contains(term))
+    terms.iter().any(|term| starts_a_word(input, term))
+}
+
+/// True when `term` occurs in `input` at the start of a word.
+///
+/// The term lists are full of short, common letter sequences, so the plain
+/// `str::contains` this replaced fired on words that have nothing to do with
+/// the route: `"ci"` inside "delicious" and "special", `"file"` inside
+/// "profile", `"test"` inside "latest", `"repo"` inside "reported". Any of
+/// those sent ordinary chat to the coding model.
+///
+/// Anchoring only the *start* of the match is deliberate. The term lists
+/// carry bare stems and rely on `contains` to pick up inflections — "tests",
+/// "commits", "refactoring", "github", "reviewer" — so requiring a word end
+/// as well would silently stop routing prompts that route correctly today.
+/// As written this can only ever match a subset of what `contains` matched.
+fn starts_a_word(input: &str, term: &str) -> bool {
+    input.match_indices(term).any(|(start, _)| {
+        input[..start]
+            .chars()
+            .next_back()
+            .map_or(true, |previous| !previous.is_alphanumeric())
+    })
 }
 
 #[cfg(test)]
@@ -149,5 +171,21 @@ mod tests {
     fn unknown_input_has_stable_fallback() {
         let route = select("summarize this");
         assert_eq!(route.model, QWEN_36);
+    }
+
+    #[test]
+    fn terms_buried_in_unrelated_words_do_not_route() {
+        // "delicious" contains "ci"; small talk is not a coding task.
+        let route = select("that was a delicious dinner");
+        assert_eq!(route.kind, RouteKind::Fallback);
+        assert_eq!(route.model, QWEN_36);
+    }
+
+    #[test]
+    fn inflected_terms_still_route_to_coding() {
+        for prompt in ["the tests are failing", "check the ci pipeline"] {
+            let route = select(prompt);
+            assert_eq!(route.model, QWEN_38, "prompt: {prompt}");
+        }
     }
 }
