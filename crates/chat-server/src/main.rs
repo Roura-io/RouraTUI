@@ -87,16 +87,27 @@ async fn main() {
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", cli.port);
+    // Bind before announcing the port: the everyday failure here is "address
+    // already in use" (a second copy of the service, or one launchd hasn't
+    // reaped yet), and printing "listening on ..." first tells the operator
+    // the opposite of what happened. Report it as a plain message and a
+    // non-zero exit rather than a panic, so the launchd log carries the
+    // reason instead of a backtrace wrapped around it.
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("rouratui-chat-server: failed to bind {addr}: {error}");
+            std::process::exit(1);
+        }
+    };
     println!(
         "rouratui-chat-server listening on {addr}, model={}",
         cli.model
     );
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .unwrap_or_else(|error| panic!("failed to bind {addr}: {error}"));
-    axum::serve(listener, app)
-        .await
-        .unwrap_or_else(|error| panic!("server error: {error}"));
+    if let Err(error) = axum::serve(listener, app).await {
+        eprintln!("rouratui-chat-server: server error: {error}");
+        std::process::exit(1);
+    }
 }
 
 /// Owns every `BuiltRuntime` for the life of the process. Runs on a plain

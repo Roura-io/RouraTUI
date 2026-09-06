@@ -647,8 +647,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
         app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
+    } else if app.scroll >= bottom {
+        // Paged all the way back down — clamp to the last line and resume
+        // auto-follow. This deliberately does not check `user_scrolled`:
+        // PageDown/ScrollDown add unconditionally without setting that flag,
+        // so an already-following reader who keeps scrolling down pushes
+        // `scroll` past `bottom` and the transcript strands itself above a
+        // band of blank rows until the next stream delta resets it.
         app.user_scrolled = false;
         app.scroll = bottom;
     }
