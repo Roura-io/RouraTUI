@@ -1,3 +1,21 @@
+# rouraTUI v3.0.10
+
+Weekly polish roll-up for the week ending 2026-09-06.
+
+## Changes
+
+- chore(polish): clamp transcript over-scroll and fail cleanly on bind error
+- chore(polish): match router terms at word starts, drop a write-only model field
+- chore(polish): restore the terminal if TUI setup fails, and stop "ci" misrouting chat
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace -- --test-threads=1` after each individual merge and on the integrated tree
+
+---
+
 # rouraTUI v3.0.8
 
 A correctness release. It makes the test suite trustworthy — the workspace has
