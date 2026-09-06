@@ -647,8 +647,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
         app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
+    } else if app.scroll >= bottom {
+        // Paged all the way back down — clamp to the last line and resume
+        // auto-follow. This deliberately does not check `user_scrolled`:
+        // PageDown/ScrollDown add unconditionally without setting that flag,
+        // so an already-following reader who keeps scrolling down pushes
+        // `scroll` past `bottom` and the transcript strands itself above a
+        // band of blank rows until the next stream delta resets it.
         app.user_scrolled = false;
         app.scroll = bottom;
     }
@@ -919,6 +924,22 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
+        // `Drop` only runs once `Self` exists, so a failure between here and
+        // the final `Ok` has to undo the terminal state by hand. Without
+        // this, `?`-ing out of the two calls below would return to a shell
+        // still in raw mode — and possibly still on the alternate screen —
+        // with no echo and no way back short of `reset`.
+        Self::open_screen().inspect_err(|_| {
+            let _ = disable_raw_mode();
+            let _ = crossterm::execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                event::DisableMouseCapture
+            );
+        })
+    }
+
+    fn open_screen() -> io::Result<Self> {
         let mut stdout = io::stdout();
         crossterm::execute!(stdout, EnterAlternateScreen, event::EnableMouseCapture)?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;

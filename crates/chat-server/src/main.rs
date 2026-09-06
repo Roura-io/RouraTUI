@@ -87,16 +87,27 @@ async fn main() {
         .with_state(state);
 
     let addr = format!("0.0.0.0:{}", cli.port);
+    // Bind before announcing the port: the everyday failure here is "address
+    // already in use" (a second copy of the service, or one launchd hasn't
+    // reaped yet), and printing "listening on ..." first tells the operator
+    // the opposite of what happened. Report it as a plain message and a
+    // non-zero exit rather than a panic, so the launchd log carries the
+    // reason instead of a backtrace wrapped around it.
+    let listener = match tokio::net::TcpListener::bind(&addr).await {
+        Ok(listener) => listener,
+        Err(error) => {
+            eprintln!("rouratui-chat-server: failed to bind {addr}: {error}");
+            std::process::exit(1);
+        }
+    };
     println!(
         "rouratui-chat-server listening on {addr}, model={}",
         cli.model
     );
-    let listener = tokio::net::TcpListener::bind(&addr)
-        .await
-        .unwrap_or_else(|error| panic!("failed to bind {addr}: {error}"));
-    axum::serve(listener, app)
-        .await
-        .unwrap_or_else(|error| panic!("server error: {error}"));
+    if let Err(error) = axum::serve(listener, app).await {
+        eprintln!("rouratui-chat-server: server error: {error}");
+        std::process::exit(1);
+    }
 }
 
 /// Owns every `BuiltRuntime` for the life of the process. Runs on a plain
@@ -104,8 +115,10 @@ async fn main() {
 /// never needs to cross an async task boundary.
 fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
     let approvals = PendingApprovals::new();
-    let mut runtimes: HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)> =
-        HashMap::new();
+    // Keying the runtime by conversation is what makes routing sticky: a
+    // thread only reaches `select` on its very first turn, and afterwards
+    // reuses the runtime already bound to the model that was chosen then.
+    let mut runtimes: HashMap<ConversationKey, rouratui_cli::BuiltRuntime> = HashMap::new();
 
     while let Ok(request) = rx.recv() {
         let result = run_one_turn(
@@ -123,14 +136,14 @@ fn worker_loop(rx: std_mpsc::Receiver<TurnRequest>, model: String) {
 }
 
 fn run_one_turn(
-    runtimes: &mut HashMap<ConversationKey, (String, rouratui_cli::BuiltRuntime)>,
+    runtimes: &mut HashMap<ConversationKey, rouratui_cli::BuiltRuntime>,
     approvals: &PendingApprovals,
     model: &str,
     key: ConversationKey,
     reply_intent: approval::ReplyIntent,
     user_input: String,
 ) -> Result<String, String> {
-    let (selected_model, mut built) = match runtimes.remove(&key) {
+    let mut built = match runtimes.remove(&key) {
         Some(existing) => existing,
         None => {
             let decision = if model == "auto" {
@@ -146,8 +159,7 @@ fn run_one_turn(
                 "rouratui route: model={} kind={:?} reason={}",
                 decision.model, decision.kind, decision.reason
             );
-            let selected_model = decision.model.clone();
-            (selected_model, new_runtime(&decision.model)?)
+            new_runtime(&decision.model)?
         }
     };
 
@@ -159,7 +171,7 @@ fn run_one_turn(
         Err(error) => format!("Internal error running this turn: {error}"),
     };
 
-    runtimes.insert(key, (selected_model, built));
+    runtimes.insert(key, built);
     Ok(text)
 }
 
