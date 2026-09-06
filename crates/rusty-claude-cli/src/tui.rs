@@ -924,6 +924,22 @@ struct TerminalSession {
 impl TerminalSession {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
+        // `Drop` only runs once `Self` exists, so a failure between here and
+        // the final `Ok` has to undo the terminal state by hand. Without
+        // this, `?`-ing out of the two calls below would return to a shell
+        // still in raw mode — and possibly still on the alternate screen —
+        // with no echo and no way back short of `reset`.
+        Self::open_screen().inspect_err(|_| {
+            let _ = disable_raw_mode();
+            let _ = crossterm::execute!(
+                io::stdout(),
+                LeaveAlternateScreen,
+                event::DisableMouseCapture
+            );
+        })
+    }
+
+    fn open_screen() -> io::Result<Self> {
         let mut stdout = io::stdout();
         crossterm::execute!(stdout, EnterAlternateScreen, event::EnableMouseCapture)?;
         let terminal = Terminal::new(CrosstermBackend::new(stdout))?;

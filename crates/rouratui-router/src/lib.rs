@@ -49,7 +49,12 @@ const CODING_TERMS: &[&str] = &[
     "implement",
     "patch",
     "workflow",
-    "ci",
+    // Spelled out rather than a bare "ci": `contains_any` matches raw
+    // substrings, so "ci" fires on decision/specific/appreciate/precise and
+    // quietly sends ordinary chat to the coding model. Plain CI phrasing is
+    // still caught by "pipeline"/"workflow"/"build"/"test"/"branch".
+    "ci/cd",
+    "continuous integration",
     "pipeline",
 ];
 
@@ -165,6 +170,20 @@ mod tests {
     fn ordinary_chat_routes_to_gpt_oss() {
         let route = select("What should I cook for dinner tonight?");
         assert_eq!(route.model, GPT_OSS);
+    }
+
+    #[test]
+    fn everyday_words_do_not_masquerade_as_coding_terms() {
+        // "decision" contains "ci". While that was a term of its own, any
+        // prompt with a word like it silently routed to the coding model.
+        let route = select("What is your decision about dinner?");
+        assert_eq!(route.model, GPT_OSS);
+        assert_eq!(route.kind, RouteKind::General);
+    }
+
+    #[test]
+    fn explicit_ci_phrasing_still_routes_to_coding() {
+        assert_eq!(select("is the ci/cd job green?").kind, RouteKind::Coding);
     }
 
     #[test]
