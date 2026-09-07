@@ -647,8 +647,13 @@ fn draw(frame: &mut ratatui_core::terminal::Frame<'_>, app: &mut App<'_>) {
     let bottom = transcript_height.saturating_sub(viewport_height);
     if app.scroll == u16::MAX {
         app.scroll = bottom;
-    } else if app.user_scrolled && app.scroll >= bottom {
-        // Paged all the way back down — resume auto-follow.
+    } else if app.scroll >= bottom {
+        // `bottom` is the largest offset that still has content under it, so
+        // pin to it rather than letting PageDown/wheel-down walk past the end.
+        // Without the clamp, scrolling down while already following the stream
+        // grew `scroll` unbounded into blank space below the transcript, and
+        // PageUp was the only way back. Arriving here also means the reader is
+        // caught up, so auto-follow resumes.
         app.user_scrolled = false;
         app.scroll = bottom;
     }
