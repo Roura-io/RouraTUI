@@ -15,8 +15,13 @@ pub struct ModelPricing {
 }
 
 impl ModelPricing {
+    /// Pricing applied when the caller has no model-specific rates to use.
+    ///
+    /// These are the top-tier (opus) rates, not sonnet's — deliberately so.
+    /// Pricing an unrecognised model too low silently under-reports what a
+    /// session cost, which is the more damaging direction to be wrong in.
     #[must_use]
-    pub const fn default_sonnet_tier() -> Self {
+    pub const fn fallback_tier() -> Self {
         Self {
             input_cost_per_million: DEFAULT_INPUT_COST_PER_MILLION,
             output_cost_per_million: DEFAULT_OUTPUT_COST_PER_MILLION,
@@ -75,7 +80,7 @@ pub fn pricing_for_model(model: &str) -> Option<ModelPricing> {
         });
     }
     if normalized.contains("sonnet") {
-        return Some(ModelPricing::default_sonnet_tier());
+        return Some(ModelPricing::fallback_tier());
     }
     None
 }
@@ -91,7 +96,7 @@ impl TokenUsage {
 
     #[must_use]
     pub fn estimate_cost_usd(self) -> UsageCostEstimate {
-        self.estimate_cost_usd_with_pricing(ModelPricing::default_sonnet_tier())
+        self.estimate_cost_usd_with_pricing(ModelPricing::fallback_tier())
     }
 
     #[must_use]

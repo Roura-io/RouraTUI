@@ -1,3 +1,20 @@
+# rouraTUI v3.0.10
+
+Weekly polish roll-up for the week ending 2026-09-13.
+
+## Changes
+
+- chore(polish): clamp transcript scroll and rename the cost fallback tier
+- chore(polish): match short routing terms as whole words
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace -- --test-threads=1` after each individual merge and on the integrated tree
+
+---
+
 # rouraTUI v3.0.8
 
 A correctness release. It makes the test suite trustworthy — the workspace has

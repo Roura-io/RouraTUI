@@ -8181,7 +8181,7 @@ impl LiveCli {
                 "estimated_cost": format_usd(
                     summary.usage.estimate_cost_usd_with_pricing(
                         pricing_for_model(&self.model)
-                            .unwrap_or_else(runtime::ModelPricing::default_sonnet_tier)
+                            .unwrap_or_else(runtime::ModelPricing::fallback_tier)
                     ).total_cost_usd()
                 )
             })
