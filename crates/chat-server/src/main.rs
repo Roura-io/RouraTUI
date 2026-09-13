@@ -138,7 +138,7 @@ fn run_one_turn(
             } else {
                 RouteDecision {
                     model: model.to_string(),
-                    kind: RouteKind::Fallback,
+                    kind: RouteKind::Explicit,
                     reason: "explicit model override",
                 }
             };

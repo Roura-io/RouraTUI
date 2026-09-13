@@ -5,7 +5,10 @@ pub enum RouteKind {
     Coding,
     DeepReasoning,
     General,
+    /// No rule matched, so the stable default model was used.
     Fallback,
+    /// Routing was skipped entirely because the caller pinned a model.
+    Explicit,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,7 +28,6 @@ const CODING_TERMS: &[&str] = &[
     "coding",
     "review",
     "pull request",
-    "pr ",
     "commit",
     "branch",
     "git",
@@ -49,7 +51,6 @@ const CODING_TERMS: &[&str] = &[
     "implement",
     "patch",
     "workflow",
-    "ci",
     "pipeline",
 ];
 
@@ -75,12 +76,33 @@ const DEEP_TERMS: &[&str] = &[
     "reasoning",
 ];
 
+const GENERAL_TERMS: &[&str] = &[
+    "hello",
+    "help me",
+    "explain",
+    "write",
+    "draft",
+    "brainstorm",
+    "advice",
+];
+
+/// Terms too short to match as substrings. The lists above are all long
+/// enough that an accidental hit is unlikely and a stem hit is welcome
+/// ("test" in "tests", "repo" in "repos"), but a two-letter term is buried
+/// inside ordinary words — "ci" in "recipe" and "decision", "pr" in
+/// "surprise", "hi" in "sushi" — so these are matched as whole words. The
+/// previous guard was a trailing space ("pr "), which both fired on
+/// unrelated text and missed the common case of the term ending a sentence.
+const CODING_WORD_TERMS: &[&str] = &["ci", "pr"];
+const GENERAL_WORD_TERMS: &[&str] = &["hi"];
+
 /// Select a model for a new conversation. The caller should keep the result
 /// sticky for follow-up turns so a tool-using task does not change models.
 #[must_use]
 pub fn select(prompt: &str) -> RouteDecision {
     let normalized = prompt.to_ascii_lowercase();
-    if contains_any(&normalized, CODING_TERMS) {
+    if contains_any(&normalized, CODING_TERMS) || contains_word_any(&normalized, CODING_WORD_TERMS)
+    {
         return decision(QWEN_38, RouteKind::Coding, "coding or review task");
     }
     if contains_any(&normalized, DEEP_TERMS) {
@@ -91,19 +113,8 @@ pub fn select(prompt: &str) -> RouteDecision {
         );
     }
     if normalized.contains('?')
-        || contains_any(
-            &normalized,
-            &[
-                "hello",
-                "hi ",
-                "help me",
-                "explain",
-                "write",
-                "draft",
-                "brainstorm",
-                "advice",
-            ],
-        )
+        || contains_any(&normalized, GENERAL_TERMS)
+        || contains_word_any(&normalized, GENERAL_WORD_TERMS)
     {
         return decision(GPT_OSS, RouteKind::General, "general conversation");
     }
@@ -120,6 +131,15 @@ fn decision(model: &str, kind: RouteKind, reason: &'static str) -> RouteDecision
 
 fn contains_any(input: &str, terms: &[&str]) -> bool {
     terms.iter().any(|term| input.contains(term))
+}
+
+/// `input` is already ASCII-lowercased; anything that is not an ASCII
+/// alphanumeric separates words, so punctuation-hugged terms ("the PR.",
+/// "ci/cd") still match.
+fn contains_word_any(input: &str, terms: &[&str]) -> bool {
+    input
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .any(|word| terms.contains(&word))
 }
 
 #[cfg(test)]
@@ -149,5 +169,24 @@ mod tests {
     fn unknown_input_has_stable_fallback() {
         let route = select("summarize this");
         assert_eq!(route.model, QWEN_36);
+    }
+
+    #[test]
+    fn short_terms_do_not_match_inside_ordinary_words() {
+        // "recipe" contains "ci", "surprise" contains "pr", "sushi" contains
+        // "hi" — none of them are about code.
+        for prompt in [
+            "what is a good recipe for dinner tonight",
+            "plan a surprise party for my sushi loving brother",
+        ] {
+            assert_ne!(select(prompt).kind, RouteKind::Coding, "prompt: {prompt}");
+        }
+    }
+
+    #[test]
+    fn short_terms_still_match_as_whole_words() {
+        assert_eq!(select("is ci green").kind, RouteKind::Coding);
+        assert_eq!(select("take a look at the pr.").kind, RouteKind::Coding);
+        assert_eq!(select("hi").kind, RouteKind::General);
     }
 }
