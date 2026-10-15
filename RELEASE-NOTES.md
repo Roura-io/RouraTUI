@@ -1,3 +1,20 @@
+# rouraTUI v3.0.9
+
+Weekly polish roll-up for the week ending 2026-08-16.
+
+## Changes
+
+- chore(polish): keep the transcript from scrolling past its own end
+- chore(polish): name the composer layout heights and drop a dead fence copy
+
+## Validation
+
+- `cargo fmt --all -- --check`
+- `cargo clippy --workspace --all-targets -- -D warnings`
+- `cargo test --workspace` after each individual merge and on the integrated tree
+
+---
+
 # rouraTUI v3.0.8
 
 A correctness release. It makes the test suite trustworthy — the workspace has

@@ -755,13 +755,6 @@ fn normalize_nested_fences(markdown: &str) -> String {
         let opener_fl = fence_info[*opener_idx].as_ref().unwrap();
         if opener_fl.len <= *inner_max {
             let new_len = inner_max + 1;
-            let info_part = {
-                let trimmed = lines[*opener_idx]
-                    .trim_end_matches('\n')
-                    .trim_end_matches('\r');
-                let rest = &trimmed[opener_fl.indent..];
-                rest[opener_fl.len..].to_string()
-            };
             rewrites.insert(
                 *opener_idx,
                 Rewrite {
@@ -779,11 +772,11 @@ fn normalize_nested_fences(markdown: &str) -> String {
                     indent: closer_fl.indent,
                 },
             );
-            // Store info string only in the opener; closer keeps the trailing
-            // portion which is already handled through the original line.
-            // Actually, we rebuild both lines from scratch below, including
-            // the info string for the opener.
-            let _ = info_part; // consumed in rebuild
+            // Only the fence marker is recorded here. The info string ("rust",
+            // "json", …) is not carried along, because the rebuild loop below
+            // re-slices it straight off the original line via the same
+            // `indent + len` offsets — so extracting it here would just be a
+            // second copy that gets thrown away.
         }
     }
 
